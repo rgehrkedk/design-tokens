@@ -78,7 +78,7 @@ async function processFile(filePath) {
         // Hvis det er en brand fil (ligger i brand mappen)
         if (fileDir === 'brand') {
             const flattenedData = flattenBrandValues(jsonData);
-            tsContent = `export const ${fileName.replace(/-/g, '')} = ${JSON.stringify(flattenedData, null, 2)};\n`;
+            tsContent = `export const ${fileName.replace(/-/g, '')} = ${customStringify(flattenedData)};\n`;
         } 
         // Hvis det er en theme fil
         else if (fileDir === 'theme') {
@@ -91,7 +91,7 @@ async function processFile(filePath) {
                 themeObject[key] = value;
             }
             
-            tsContent += `const ${fileName.replace(/-/g, '')} = ${JSON.stringify(themeObject, null, 2)};\n\n`;
+            tsContent += `const ${fileName.replace(/-/g, '')} = ${customStringify(themeObject)};\n\n`;
             tsContent += `export const theme = ${fileName.replace(/-/g, '')};\n`;
         }
         
