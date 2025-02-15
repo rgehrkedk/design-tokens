@@ -18,7 +18,7 @@ function ensureDirectoryExistence(filePath) {
   }
 }
 
-// Funktion til at generere et gyldigt variabelnavn
+// Funktion til at generere et gyldigt variabelnavn (fjerner bindestreger)
 function toValidVariableName(name) {
   return name.replace(/-/g, "_").replace(/\W/g, ""); // Erstat "-" med "_", fjern ugyldige tegn
 }
@@ -27,9 +27,9 @@ function toValidVariableName(name) {
 function determineDependencies(relativePath) {
   const dependencies = [];
   if (relativePath.startsWith("brand/")) {
-    dependencies.push("../globals/globals", "../theme/dark-mode", "../theme/light-mode");
+    dependencies.push("../globals/default", "../theme/dark-mode", "../theme/light-mode");
   } else if (relativePath.startsWith("theme/")) {
-    dependencies.push("../globals/globals", `../brand/${path.basename(relativePath, ".ts")}`);
+    dependencies.push("../globals/default", `../brand/${path.basename(relativePath, ".ts")}`);
   }
   return dependencies;
 }
