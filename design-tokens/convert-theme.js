@@ -5,62 +5,50 @@ import { basename, dirname, join, relative } from 'path';
 
 // Hjælpefunktion til at konvertere JSON struktur til det ønskede TS format
 function convertJsonToTs(jsonData, filePath) {
-    let imports = new Set();
-    let tsContent = '';
-
-    function processValue(value) {
-        if (typeof value === 'object' && value !== null) {
-            if ('value' in value) {
-                // Hvis værdien er en hex-farve, returner den direkte
-                if (typeof value.value === 'string' && value.value.startsWith('#')) {
-                    return `'${value.value}'`;
-                }
-                // Hvis værdien er en reference, håndter den
-                if (typeof value.value === 'string' && value.value.startsWith('{')) {
-                    const reference = value.value.replace(/[{}]/g, '');
-                    const parts = reference.split('.');
-                    
-                    // Tilføj import hvis det er en reference til en anden fil
-                    if (parts[0] === 'brand') {
-                        imports.add("import { brand } from './brand';");
-                    }
-                    
-                    if (parts[0] === 'neutrals') {
-                        imports.add("import { brand } from './brand';");
-                        return `brand.neutrals${parts.slice(1).map(p => `['${p}']`).join('')}`;
-                    }
-                    return reference;
-                }
-                return value.value;
-            }
-            
-            // Rekursivt behandl objekter
-            const processedObj = {};
-            for (const [key, val] of Object.entries(value)) {
-                processedObj[key] = processValue(val);
-            }
-            return processedObj;
-        }
-        return value;
-    }
-
-    const processedData = processValue(jsonData);
-    
-    // Tilføj imports
-    if (imports.size > 0) {
-        tsContent += Array.from(imports).join('\n') + '\n\n';
-    }
-
-    // Hvis det er en brand-fil, eksporter objektet direkte
+    const relativePath = relative(watchDir, filePath);
+    const fileDir = dirname(relativePath);
     const fileName = basename(filePath, '.json');
-    if (fileName.startsWith('brand-')) {
-        tsContent += `export const brand = ${JSON.stringify(processedData.brand, null, 2)};\n`;
+    
+    let tsContent = '';
+    
+    // Hvis det er en brand-fil
+    if (fileDir === 'brand') {
+        // Import fra globals/default.ts
+        tsContent += `import { default as globals } from '../globals/default';\n\n`;
+        
+        // Udtræk konstant navn fra filnavnet (f.eks. 'e-boks' fra 'e-boks.ts')
+        const constName = fileName.replace(/-/g, '');
+        
+        // Konverter json data til typescript objekt
+        const processedData = processValue(jsonData);
+        
+        // Opbyg de individuelle konstanter
+        const constants = [];
+        for (const [key, value] of Object.entries(processedData)) {
+            constants.push(`const ${key} = ${JSON.stringify(value, null, 2)};`);
+        }
+        
+        // Tilføj alle konstant definitioner
+        tsContent += constants.join('\n\n') + '\n\n';
+        
+        // Eksporter det samlede objekt
+        tsContent += `export const ${constName} = {
+    neutrals: globals.neutrals,
+    brand: brand,
+    feedback: feedback,
+    thirdParty: thirdParty
+};\n`;
     } else {
-        // Ellers eksporter som theme
-        tsContent += `export const theme = ${JSON.stringify(processedData, null, 2)};\n`;
+        // For ikke-brand filer, behold den oprindelige logik
+        if (fileName.includes('default')) {
+            tsContent += `export default ${JSON.stringify(processValue(jsonData), null, 2)};\n`;
+        } else {
+            tsContent += `export const theme = ${JSON.stringify(processValue(jsonData), null, 2)};\n`;
+        }
     }
     
     return tsContent;
+}
 }
 
 // Funktion til at processere en fil
