@@ -1,102 +1,113 @@
 import { readFile, writeFile, mkdir } from 'fs/promises';
-import { existsSync, readdirSync } from 'fs';
+import { existsSync } from 'fs';
 import { watch } from 'chokidar';
 import { basename, dirname, join, relative } from 'path';
 
-// Hjælpefunktion til at konvertere JSON struktur til det ønskede TS format
-function convertJsonToTs(jsonData, filePath) {
-    const relativePath = relative(watchDir, filePath);
-    const fileDir = dirname(relativePath);
-    const fileName = basename(filePath, '.json');
+// Hjælpefunktion til at flattene værdier i brand filer
+function flattenBrandValues(obj) {
+    const result = {};
     
-    let tsContent = '';
-    
-    // Hvis det er en brand-fil
-    if (fileDir === 'brand') {
-        // Import fra globals/default.ts
-        tsContent += `import { default as globals } from '../globals/default';\n\n`;
-        
-        // Udtræk konstant navn fra filnavnet (f.eks. 'e-boks' fra 'e-boks.ts')
-        const constName = fileName.replace(/-/g, '');
-        
-        // Konverter json data til typescript objekt
-        const processedData = processValue(jsonData);
-        
-        // Opbyg de individuelle konstanter
-        const constants = [];
-        for (const [key, value] of Object.entries(processedData)) {
-            constants.push(`const ${key} = ${JSON.stringify(value, null, 2)};`);
+    function processValue(value) {
+        if (typeof value === 'object' && value !== null) {
+            if ('value' in value) {
+                return value.value;
+            }
+            const processedObj = {};
+            for (const [key, val] of Object.entries(value)) {
+                processedObj[key] = processValue(val);
+            }
+            return processedObj;
         }
-        
-        // Tilføj alle konstant definitioner
-        tsContent += constants.join('\n\n') + '\n\n';
-        
-        // Eksporter det samlede objekt
-        tsContent += `export const ${constName} = {
-    neutrals: globals.neutrals,
-    brand: brand,
-    feedback: feedback,
-    thirdParty: thirdParty
-};\n`;
-    } else {
-        // For non-brand files, keep the original logic
-        if (fileName.includes('default')) {
-            tsContent += `export default ${JSON.stringify(processValue(jsonData), null, 2)};\n`;
-        } else {
-            tsContent += `export const theme = ${JSON.stringify(processValue(jsonData), null, 2)};\n`;
-        }
+        return value;
     }
     
-    return tsContent;
+    return processValue(obj);
 }
 
-// Funktion til at processere en fil
+// Hjælpefunktion til at konvertere theme referencer
+function convertThemeReferences(obj) {
+    const result = {};
+    
+    function processValue(value) {
+        if (typeof value === 'object' && value !== null) {
+            if ('value' in value) {
+                let refValue = value.value;
+                if (typeof refValue === 'string' && refValue.startsWith('{')) {
+                    // Fjern {} og konverter referencen
+                    refValue = refValue.replace(/[{}]/g, '');
+                    const parts = refValue.split('.');
+                    
+                    if (parts[0] === 'brand' || parts[0] === 'neutrals' || parts[0] === 'feedback') {
+                        return `brand.${parts.join('.')}`;
+                    }
+                    // Håndter andre referencer (components, etc.)
+                    return refValue;
+                }
+                return refValue;
+            }
+            const processedObj = {};
+            for (const [key, val] of Object.entries(value)) {
+                processedObj[key] = processValue(val);
+            }
+            return processedObj;
+        }
+        return value;
+    }
+    
+    for (const [key, value] of Object.entries(obj)) {
+        result[key] = processValue(value);
+    }
+    
+    return result;
+}
+
 async function processFile(filePath) {
-    console.log(`Processing file: ${filePath}`);
+    console.log(`Processerer fil: ${filePath}`);
     try {
         // Læs JSON filen
         const jsonContent = await readFile(filePath, 'utf8');
         const jsonData = JSON.parse(jsonContent);
         
-        // Konverter til TS format
-        const tsContent = convertJsonToTs(jsonData, filePath);
-        
-        // Bevar mappestien relativt til json-mappen
+        // Bestem filtype baseret på sti og indhold
         const relativePath = relative(watchDir, filePath);
-        const relativeDir = dirname(relativePath);
+        const fileDir = dirname(relativePath);
         const fileName = basename(filePath, '.json');
         
+        let tsContent = '';
+        
+        // Hvis det er en brand fil (ligger i brand mappen)
+        if (fileDir === 'brand') {
+            const flattenedData = flattenBrandValues(jsonData);
+            tsContent = `export const ${fileName.replace(/-/g, '')} = ${JSON.stringify(flattenedData, null, 2)};\n`;
+        } 
+        // Hvis det er en theme fil
+        else if (fileDir === 'theme') {
+            tsContent = `import { brand } from '../brand/core';\n\n`;
+            const processedData = convertThemeReferences(jsonData);
+            const themeObject = {};
+            
+            // Opbyg theme objektet
+            for (const [key, value] of Object.entries(processedData)) {
+                themeObject[key] = value;
+            }
+            
+            tsContent += `const ${fileName.replace(/-/g, '')} = ${JSON.stringify(themeObject, null, 2)};\n\n`;
+            tsContent += `export const theme = ${fileName.replace(/-/g, '')};\n`;
+        }
+        
         // Opret de nødvendige undermapper i ts-mappen
-        const targetDir = join(outputDir, relativeDir);
+        const targetDir = join(outputDir, fileDir);
         if (!existsSync(targetDir)) {
             await mkdir(targetDir, { recursive: true });
         }
         
-        // Gem som .ts fil med samme relative sti
+        // Gem som .ts fil
         const outputPath = join(targetDir, `${fileName}.ts`);
-        
         await writeFile(outputPath, tsContent);
         console.log(`Konverteret til TypeScript: ${outputPath}`);
     } catch (error) {
         console.error(`Fejl ved konvertering af ${filePath}:`, error);
     }
-}
-
-// Hjælpefunktion til at rekursivt liste alle JSON filer
-function listJsonFiles(dir) {
-    const files = readdirSync(dir, { withFileTypes: true });
-    let jsonFiles = [];
-    
-    for (const file of files) {
-        const fullPath = join(dir, file.name);
-        if (file.isDirectory()) {
-            jsonFiles = [...jsonFiles, ...listJsonFiles(fullPath)];
-        } else if (file.name.endsWith('.json')) {
-            jsonFiles.push(fullPath);
-        }
-    }
-    
-    return jsonFiles;
 }
 
 // Opsæt watch på input directory
@@ -108,19 +119,8 @@ if (!existsSync(outputDir)) {
     await mkdir(outputDir, { recursive: true });
 }
 
-// Check eksisterende filer først
-console.log('Checking for existing JSON files...');
-const existingFiles = listJsonFiles(watchDir);
-console.log(`Found ${existingFiles.length} JSON files:`);
-existingFiles.forEach(file => console.log(` - ${file}`));
-
-// Proces eksisterende filer
-for (const file of existingFiles) {
-    await processFile(file);
-}
-
-// Start watching for nye JSON filer rekursivt i alle undermapper
-console.log(`\nStarting watcher for ${watchDir}...`);
+// Start watching for nye JSON filer
+console.log(`Overvåger ${watchDir} for JSON filer...`);
 
 const watcher = watch(`${watchDir}/**/*.json`, {
     persistent: true,
@@ -128,10 +128,8 @@ const watcher = watch(`${watchDir}/**/*.json`, {
     awaitWriteFinish: true
 });
 
-// Lyt efter nye filer
 watcher.on('add', processFile);
 
-// Log alle events for at hjælpe med debugging
 watcher.on('ready', () => {
     console.log('Initial scan complete. Ready for changes');
 });
