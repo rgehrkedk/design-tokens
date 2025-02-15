@@ -1,4 +1,5 @@
-import { readFile, writeFile, mkdir, existsSync } from 'fs/promises';
+import { readFile, writeFile, mkdir } from 'fs/promises';
+import { existsSync } from 'fs';
 import { watch } from 'chokidar';
 import { basename, dirname, join, relative } from 'path';
 
