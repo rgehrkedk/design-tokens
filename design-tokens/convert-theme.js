@@ -3,6 +3,35 @@ import { existsSync, readdirSync } from 'fs';
 import { watch } from 'chokidar';
 import { basename, dirname, join, relative } from 'path';
 
+// Hjælpefunktion til at formatere værdier korrekt med quotes
+function formatValue(key, value) {
+    // Hvis værdien er et objekt, håndter det rekursivt
+    if (typeof value === 'object' && value !== null) {
+        const entries = Object.entries(value).map(([k, v]) => {
+            const formattedKey = k.includes('-') || k.includes(' ') ? `'${k}'` : k;
+            return `${formattedKey}: ${formatValue(k, v)}`;
+        });
+        return `{\n${entries.join(',\n')}\n}`;
+    }
+    
+    // Hvis værdien er en string
+    if (typeof value === 'string') {
+        // Hvis det er en reference til brand
+        if (value.startsWith('brand.')) {
+            return value;
+        }
+        // Hvis det er en hex farve eller anden string værdi
+        return `'${value}'`;
+    }
+    
+    // For alle andre typer værdier
+    return value;
+}
+
+function customStringify(obj) {
+    return formatValue(null, obj);
+}
+
 // Hjælpefunktion til at flattene værdier i brand filer
 function flattenBrandValues(obj) {
     const result = {};
@@ -80,6 +109,11 @@ async function processFile(filePath) {
             const flattenedData = flattenBrandValues(jsonData);
             tsContent = `export const ${fileName.replace(/-/g, '')} = ${customStringify(flattenedData)};\n`;
         } 
+        // Hvis det er en globals fil
+        else if (fileDir === 'globals') {
+            const flattenedData = flattenBrandValues(jsonData);
+            tsContent = `export default ${customStringify(flattenedData)};\n`;
+        }
         // Hvis det er en theme fil
         else if (fileDir === 'theme') {
             tsContent = `import { brand } from '../brand/core';\n\n`;
@@ -151,7 +185,7 @@ existingFiles.forEach(file => {
 });
 
 // Start watching for nye JSON filer
-console.log(`Overvåger ${watchDir} for JSON filer...`);
+console.log(`\nOvervåger ${watchDir} for JSON filer...`);
 
 const watcher = watch(`${watchDir}/**/*.json`, {
     persistent: true,
