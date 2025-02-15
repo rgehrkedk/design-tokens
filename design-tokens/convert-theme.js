@@ -1,7 +1,24 @@
 import { readFile, writeFile, mkdir } from 'fs/promises';
-import { existsSync } from 'fs';
+import { existsSync, readdirSync } from 'fs';
 import { watch } from 'chokidar';
 import { basename, dirname, join, relative } from 'path';
+
+// Hjælpefunktion til at rekursivt liste alle JSON filer
+function listJsonFiles(dir) {
+    const files = readdirSync(dir, { withFileTypes: true });
+    let jsonFiles = [];
+    
+    for (const file of files) {
+        const fullPath = join(dir, file.name);
+        if (file.isDirectory()) {
+            jsonFiles = [...jsonFiles, ...listJsonFiles(fullPath)];
+        } else if (file.name.endsWith('.json')) {
+            jsonFiles.push(fullPath);
+        }
+    }
+    
+    return jsonFiles;
+}
 
 // Hjælpefunktion til at konvertere JSON struktur til det ønskede TS format
 function convertJsonToTs(jsonData) {
@@ -56,8 +73,19 @@ if (!existsSync(outputDir)) {
     await mkdir(outputDir, { recursive: true });
 }
 
+// Check eksisterende filer først
+console.log('Checking for existing JSON files...');
+const existingFiles = listJsonFiles(watchDir);
+console.log(`Found ${existingFiles.length} JSON files:`);
+existingFiles.forEach(file => console.log(` - ${file}`));
+
+// Proces eksisterende filer
+for (const file of existingFiles) {
+    await processFile(file);
+}
+
 // Start watching for nye JSON filer rekursivt i alle undermapper
-console.log(`Søger efter JSON filer i ${watchDir}...`);
+console.log(`\nStarting watcher for ${watchDir}...`);
 
 const watcher = watch(`${watchDir}/**/*.json`, {
     persistent: true,
