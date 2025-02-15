@@ -39,7 +39,7 @@ function convertJsonToTs(jsonData, filePath) {
     thirdParty: thirdParty
 };\n`;
     } else {
-        // For ikke-brand filer, behold den oprindelige logik
+        // For non-brand files, keep the original logic
         if (fileName.includes('default')) {
             tsContent += `export default ${JSON.stringify(processValue(jsonData), null, 2)};\n`;
         } else {
@@ -49,11 +49,10 @@ function convertJsonToTs(jsonData, filePath) {
     
     return tsContent;
 }
-}
 
 // Funktion til at processere en fil
 async function processFile(filePath) {
-    console.log(`Processerer fil: ${filePath}`);
+    console.log(`Processing file: ${filePath}`);
     try {
         // Læs JSON filen
         const jsonContent = await readFile(filePath, 'utf8');
