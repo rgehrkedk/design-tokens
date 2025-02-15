@@ -18,6 +18,11 @@ function ensureDirectoryExistence(filePath) {
   }
 }
 
+// Funktion til at generere et gyldigt variabelnavn (fjerner bindestreger)
+function toValidVariableName(name) {
+  return name.replace(/-/g, "_").replace(/\W/g, ""); // Erstat "-" med "_", fjern ugyldige tegn
+}
+
 // Bestemmer afhængigheder baseret på mappestruktur
 function determineDependencies(relativePath) {
   const dependencies = [];
@@ -33,7 +38,7 @@ function determineDependencies(relativePath) {
 function convertJsonToTs(jsonPath) {
   const relativePath = path.relative(jsonDir, jsonPath);
   const tsPath = path.join(tsDir, relativePath.replace(/\.json$/, ".ts"));
-  const moduleName = path.basename(tsPath, ".ts");
+  const moduleName = toValidVariableName(path.basename(tsPath, ".ts"));
 
   fs.readFile(jsonPath, "utf8", (err, data) => {
     if (err) {
@@ -45,10 +50,13 @@ function convertJsonToTs(jsonPath) {
       const jsonData = JSON.parse(data);
       const dependencies = determineDependencies(relativePath);
 
-      // Lav imports
-      let imports = dependencies.map(dep => `import * as ${path.basename(dep)} from "${dep}";`).join("\n");
+      // Lav imports med gyldige variabelnavne
+      let imports = dependencies.map(dep => {
+        const importVar = toValidVariableName(path.basename(dep));
+        return `import * as ${importVar} from "${dep}";`;
+      }).join("\n");
 
-      // Eksportér objektet
+      // Eksportér objektet med gyldigt navn
       const tsContent = `${imports}\n\nexport const ${moduleName} = ${JSON.stringify(jsonData, null, 2)};`;
 
       ensureDirectoryExistence(tsPath);
