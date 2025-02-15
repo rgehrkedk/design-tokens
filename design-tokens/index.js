@@ -131,21 +131,38 @@ function getStyleDictionaryConfig(mode1, mode2) {
  */
 (async () => {
   const links = await fetchLinks();
+  
+  if (!links || links.length === 0) {
+    console.error("❗️No links found");
+    return;
+  }
+  
   await saveFiles(links);
 
   const collectionModes = extractCollectionModes(links);
-  const tokensCollectionModes = collectionModes.tokens;
-  const primitivesCollectionModes = collectionModes.primitives;
+  
+  // Check if collections exist
+  if (!collectionModes || !collectionModes.tokens) {
+    console.error("❗️No token collections found");
+    return;
+  }
+
+  const tokensCollectionModes = collectionModes.tokens || [];
+  const primitivesCollectionModes = collectionModes.primitives || [];
   const platforms = ["web", "ios"];
 
   console.log("\n🚀 Build started...");
+  console.log("Token modes:", tokensCollectionModes);
+  console.log("Primitive modes:", primitivesCollectionModes);
 
-  tokensCollectionModes.forEach((m1) => {
-    primitivesCollectionModes.forEach((m2) => {
-      platforms.forEach((platform) => {
-        const sd = new StyleDictionary(getStyleDictionaryConfig(m1, m2));
-        sd.buildPlatform(platform);
+  if (tokensCollectionModes.length > 0) {
+    tokensCollectionModes.forEach((m1) => {
+      primitivesCollectionModes.forEach((m2) => {
+        platforms.forEach((platform) => {
+          const sd = new StyleDictionary(getStyleDictionaryConfig(m1, m2));
+          sd.buildPlatform(platform);
+        });
       });
     });
-  });
+  }
 })();
