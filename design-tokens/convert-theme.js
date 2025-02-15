@@ -110,6 +110,28 @@ async function processFile(filePath) {
     }
 }
 
+// Hjælpefunktion til at rekursivt liste alle JSON filer
+function listJsonFiles(dir) {
+    try {
+        const files = readdirSync(dir, { withFileTypes: true });
+        let jsonFiles = [];
+        
+        for (const file of files) {
+            const fullPath = join(dir, file.name);
+            if (file.isDirectory()) {
+                jsonFiles = [...jsonFiles, ...listJsonFiles(fullPath)];
+            } else if (file.name.endsWith('.json')) {
+                jsonFiles.push(fullPath);
+            }
+        }
+        
+        return jsonFiles;
+    } catch (error) {
+        console.error(`Fejl ved scanning af mappe ${dir}:`, error);
+        return [];
+    }
+}
+
 // Opsæt watch på input directory
 const watchDir = './json';
 const outputDir = './ts';
@@ -118,6 +140,15 @@ const outputDir = './ts';
 if (!existsSync(outputDir)) {
     await mkdir(outputDir, { recursive: true });
 }
+
+// Scan efter eksisterende filer først
+console.log('Scanner efter eksisterende JSON filer...');
+const existingFiles = listJsonFiles(watchDir);
+console.log(`Fandt ${existingFiles.length} JSON filer:`);
+existingFiles.forEach(file => {
+    console.log(` - ${file}`);
+    processFile(file);
+});
 
 // Start watching for nye JSON filer
 console.log(`Overvåger ${watchDir} for JSON filer...`);
