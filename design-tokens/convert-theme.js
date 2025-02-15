@@ -57,9 +57,21 @@ if (!existsSync(outputDir)) {
 }
 
 // Start watching for nye JSON filer rekursivt i alle undermapper
+console.log(`Søger efter JSON filer i ${watchDir}...`);
+
 const watcher = watch(`${watchDir}/**/*.json`, {
     persistent: true,
-    ignoreInitial: false
+    ignoreInitial: false,
+    awaitWriteFinish: true
+});
+
+// Log alle events for at hjælpe med debugging
+watcher.on('ready', () => {
+    console.log('Initial scan complete. Ready for changes');
+});
+
+watcher.on('error', error => {
+    console.error(`Watcher error: ${error}`);
 });
 
 watcher.on('add', async (filePath) => {
@@ -93,5 +105,40 @@ watcher.on('add', async (filePath) => {
         console.error(`Fejl ved konvertering af ${filePath}:`, error);
     }
 });
+
+// Funktion til at processere en fil
+async function processFile(filePath) {
+    console.log(`Processerer fil: ${filePath}`);
+    try {
+        // Læs JSON filen
+        const jsonContent = await readFile(filePath, 'utf8');
+        const jsonData = JSON.parse(jsonContent);
+        
+        // Konverter til TS format
+        const tsContent = convertJsonToTs(jsonData);
+        
+        // Bevar mappestien relativt til json-mappen
+        const relativePath = relative(watchDir, filePath);
+        const relativeDir = dirname(relativePath);
+        const fileName = basename(filePath, '.json');
+        
+        // Opret de nødvendige undermapper i ts-mappen
+        const targetDir = join(outputDir, relativeDir);
+        if (!existsSync(targetDir)) {
+            await mkdir(targetDir, { recursive: true });
+        }
+        
+        // Gem som .ts fil med samme relative sti
+        const outputPath = join(targetDir, `${fileName}.ts`);
+        
+        await writeFile(outputPath, tsContent);
+        console.log(`Konverteret til TypeScript: ${outputPath}`);
+    } catch (error) {
+        console.error(`Fejl ved konvertering af ${filePath}:`, error);
+    }
+}
+
+// Lyt efter nye filer
+watcher.on('add', processFile);
 
 console.log(`Overvåger ${watchDir} for nye JSON filer...`);
