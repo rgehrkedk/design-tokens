@@ -18,10 +18,22 @@ function ensureDirectoryExistence(filePath) {
   }
 }
 
-// Konverter JSON til TypeScript format
+// Bestemmer afhængigheder baseret på mappestruktur
+function determineDependencies(relativePath) {
+  const dependencies = [];
+  if (relativePath.startsWith("brand/")) {
+    dependencies.push("../globals/default", "../theme/dark-mode", "../theme/light-mode");
+  } else if (relativePath.startsWith("theme/")) {
+    dependencies.push("../globals/default", `../brand/${path.basename(relativePath, ".ts")}`);
+  }
+  return dependencies;
+}
+
+// Konverter JSON til TypeScript format med imports
 function convertJsonToTs(jsonPath) {
   const relativePath = path.relative(jsonDir, jsonPath);
   const tsPath = path.join(tsDir, relativePath.replace(/\.json$/, ".ts"));
+  const moduleName = path.basename(tsPath, ".ts");
 
   fs.readFile(jsonPath, "utf8", (err, data) => {
     if (err) {
@@ -31,7 +43,13 @@ function convertJsonToTs(jsonPath) {
 
     try {
       const jsonData = JSON.parse(data);
-      const tsContent = `export const tokens = ${JSON.stringify(jsonData, null, 2)};`;
+      const dependencies = determineDependencies(relativePath);
+
+      // Lav imports
+      let imports = dependencies.map(dep => `import * as ${path.basename(dep)} from "${dep}";`).join("\n");
+
+      // Eksportér objektet
+      const tsContent = `${imports}\n\nexport const ${moduleName} = ${JSON.stringify(jsonData, null, 2)};`;
 
       ensureDirectoryExistence(tsPath);
 
