@@ -1,6 +1,11 @@
-const fs = require("fs");
-const path = require("path");
-const chokidar = require("chokidar");
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import chokidar from "chokidar";
+
+// Håndter __dirname i ESM
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const jsonDir = path.join(__dirname, "json");
 const tsDir = path.join(__dirname, "ts");
@@ -18,7 +23,6 @@ function convertJsonToTs(jsonPath) {
   const relativePath = path.relative(jsonDir, jsonPath);
   const tsPath = path.join(tsDir, relativePath.replace(/\.json$/, ".ts"));
 
-  // Læs JSON-indholdet
   fs.readFile(jsonPath, "utf8", (err, data) => {
     if (err) {
       console.error(`Fejl ved læsning af ${jsonPath}:`, err);
@@ -29,10 +33,8 @@ function convertJsonToTs(jsonPath) {
       const jsonData = JSON.parse(data);
       const tsContent = `export const tokens = ${JSON.stringify(jsonData, null, 2)};`;
 
-      // Sikrer, at mappen eksisterer
       ensureDirectoryExistence(tsPath);
 
-      // Skriv TypeScript-filen
       fs.writeFile(tsPath, tsContent, "utf8", (err) => {
         if (err) {
           console.error(`Fejl ved skrivning af ${tsPath}:`, err);
