@@ -1,6 +1,6 @@
-const fs = require('fs');
-const path = require('path');
-const chokidar = require('chokidar');
+import { readFile, writeFile, mkdir, existsSync } from 'fs/promises';
+import { watch } from 'chokidar';
+import { basename, dirname, join, relative } from 'path';
 
 // Hjælpefunktion til at konvertere JSON struktur til det ønskede TS format
 function convertJsonToTs(jsonData) {
@@ -51,42 +51,42 @@ const watchDir = './json';
 const outputDir = './ts';
 
 // Sørg for at output directory eksisterer
-if (!fs.existsSync(outputDir)) {
-    fs.mkdirSync(outputDir, { recursive: true });
+if (!existsSync(outputDir)) {
+    await mkdir(outputDir, { recursive: true });
 }
 
 // Start watching for nye JSON filer rekursivt i alle undermapper
-const watcher = chokidar.watch(`${watchDir}/**/*.json`, {
+const watcher = watch(`${watchDir}/**/*.json`, {
     persistent: true,
     ignoreInitial: false
 });
 
-watcher.on('add', (filePath) => {
+watcher.on('add', async (filePath) => {
     console.log(`Ny JSON fil opdaget: ${filePath}`);
     
     try {
         // Læs JSON filen
-        const jsonContent = fs.readFileSync(filePath, 'utf8');
+        const jsonContent = await readFile(filePath, 'utf8');
         const jsonData = JSON.parse(jsonContent);
         
         // Konverter til TS format
         const tsContent = convertJsonToTs(jsonData);
         
         // Bevar mappestien relativt til json-mappen
-        const relativePath = path.relative(watchDir, filePath);
-        const relativeDir = path.dirname(relativePath);
-        const fileName = path.basename(filePath, '.json');
+        const relativePath = relative(watchDir, filePath);
+        const relativeDir = dirname(relativePath);
+        const fileName = basename(filePath, '.json');
         
         // Opret de nødvendige undermapper i ts-mappen
-        const targetDir = path.join(outputDir, relativeDir);
-        if (!fs.existsSync(targetDir)) {
-            fs.mkdirSync(targetDir, { recursive: true });
+        const targetDir = join(outputDir, relativeDir);
+        if (!existsSync(targetDir)) {
+            await mkdir(targetDir, { recursive: true });
         }
         
         // Gem som .ts fil med samme relative sti
-        const outputPath = path.join(targetDir, `${fileName}.ts`);
+        const outputPath = join(targetDir, `${fileName}.ts`);
         
-        fs.writeFileSync(outputPath, tsContent);
+        await writeFile(outputPath, tsContent);
         console.log(`Konverteret til TypeScript: ${outputPath}`);
     } catch (error) {
         console.error(`Fejl ved konvertering af ${filePath}:`, error);
