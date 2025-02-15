@@ -29,7 +29,10 @@ function determineDependencies(relativePath) {
   if (relativePath.startsWith("brand/")) {
     dependencies.push("../globals/globals", "../theme/dark-mode", "../theme/light-mode");
   } else if (relativePath.startsWith("theme/")) {
-    dependencies.push("../globals/globals", `../brand/${path.basename(relativePath, ".ts")}`);
+    dependencies.push("../globals/globals");
+    // Tilføj den relevante brand-fil
+    const brandFile = "../brand/e-boks"; // Hvis der er flere brands, skal dette tilpasses dynamisk
+    dependencies.push(brandFile);
   }
   return dependencies;
 }
@@ -50,11 +53,13 @@ function convertJsonToTs(jsonPath) {
       const jsonData = JSON.parse(data);
       const dependencies = determineDependencies(relativePath);
 
-      // Lav imports med gyldige variabelnavne
-      let imports = dependencies.map(dep => {
-        const importVar = toValidVariableName(path.basename(dep));
-        return `import * as ${importVar} from "${dep}";`;
-      }).join("\n");
+      // Lav imports med gyldige variabelnavne uden .json
+      let imports = dependencies
+        .map(dep => {
+          const importVar = toValidVariableName(path.basename(dep));
+          return `import * as ${importVar} from "${dep}";`;
+        })
+        .join("\n");
 
       // Eksportér objektet med gyldigt navn
       const tsContent = `${imports}\n\nexport const ${moduleName} = ${JSON.stringify(jsonData, null, 2)};`;
