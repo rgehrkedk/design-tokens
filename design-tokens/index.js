@@ -51,6 +51,9 @@ async function saveFiles(links) {
       }
 
       const jsonData = await response.json();
+      
+      // Transform to DTCG format
+      const dtcgData = transformToDTCG(jsonData);
 
       const [collection, mode] = extractCollectionAndMode(link);
       const directory = path.join(__dirname, "json", collection);
@@ -60,11 +63,30 @@ async function saveFiles(links) {
       const fileName = `${mode}.json`;
       const filePath = path.join(directory, fileName);
 
-      await fs.writeFile(filePath, JSON.stringify(jsonData, null, 2));
+      await fs.writeFile(filePath, JSON.stringify(dtcgData, null, 2));
     }
   } catch (error) {
     console.error("❗️Error:", error);
   }
+}
+
+// Add this function to transform tokens
+function transformToDTCG(tokens) {
+  const transformed = {};
+  
+  for (const [key, value] of Object.entries(tokens)) {
+    if (typeof value === 'object' && value !== null) {
+      transformed[key] = transformToDTCG(value);
+    } else {
+      transformed[key] = {
+        '$value': value,
+        '$type': typeof value,
+        '$description': ''
+      };
+    }
+  }
+  
+  return transformed;
 }
 
 /**
