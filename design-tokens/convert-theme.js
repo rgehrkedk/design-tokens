@@ -89,11 +89,14 @@ function formatJsonForTs(obj, prefix) {
     .replace(/"([^"]+)":/g, (match, p1) => (p1.includes("-") ? `'${p1}':` : `${p1}:`)) // ' ' ved bindestreg-nøgler
     .replace(/"\{([^}]+)\}"/g, (match, p1) => { 
       const parts = p1.split('.');
+
       if (parts.length === 2) {
         return `${prefix}${parts[0]}['${parts[1]}']`; // brand.primary['300']
-      } else if (parts.length === 3) {
-        return `${prefix}${parts[0]}.${parts[1]}['${parts[2]}']`; // brand.primary['300']
+      } else if (parts.length >= 3) {
+        return `${prefix}${parts[0]}.${parts[1]}${parts.slice(2).map(p => `['${p}']`).join('')}`; 
+        // brand.neutrals.alpha['900']['10']
       }
+
       return match; // fallback hvis formatet er anderledes
     })
     .replace(/"([^"]+)"/g, "'$1'"); // ' ' omkring alle andre værdier
@@ -111,7 +114,7 @@ function convertJsonToTs(jsonPath) {
   const tsPath = path.join(tsDir, relativePath.replace(/\.json$/, ".ts"));
 
   // Bestem prefix afhængigt af mappen (brand eller globals)
-  const prefix = relativePath.startsWith("brand/") ? "brand." : relativePath.startsWith("globals/") ? "globals." : "";
+  const prefix = relativePath.startsWith("brand/") ? "brand." : relativePath.startsWith("globals/") ? "globals." : "brand.";
 
   // Generér et gyldigt TypeScript variabelnavn
   const moduleName = path.basename(tsPath, ".ts").replace(/-/g, "_");
@@ -154,25 +157,7 @@ function convertJsonToTs(jsonPath) {
   });
 }
 
-/**
- * Gennemgår hele `json/`-mappen og konverterer alle eksisterende JSON-filer til TypeScript-filer.
- */
-function convertAllExistingJson() {
-  function scanDir(dir) {
-    fs.readdirSync(dir, { withFileTypes: true }).forEach(dirent => {
-      const fullPath = path.join(dir, dirent.name);
-      if (dirent.isDirectory()) {
-        scanDir(fullPath); // Hvis det er en mappe, scan den rekursivt
-      } else if (dirent.isFile() && dirent.name.endsWith(".json")) {
-        convertJsonToTs(fullPath);
-      }
-    });
-  }
-  console.log("🔄 Konverterer eksisterende JSON-filer...");
-  scanDir(jsonDir);
-}
-
-// 🚀 Kald funktionen korrekt
+// 🚀 Konverter alle eksisterende JSON-filer ved scriptets opstart
 convertAllExistingJson();
 
 console.log("👀 Overvåger JSON-filer i:", jsonDir);
