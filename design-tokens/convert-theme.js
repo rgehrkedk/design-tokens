@@ -3,20 +3,12 @@ import path from "path";
 import { fileURLToPath } from "url";
 import chokidar from "chokidar";
 
-// Håndter __dirname i ES Modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-/**
- * Stier til JSON input-mappen og TypeScript output-mappen.
- */
 const jsonDir = path.join(__dirname, "json");
 const tsDir = path.join(__dirname, "ts");
 
-/**
- * Sikrer, at en mappe eksisterer. Hvis ikke, opretter den den nødvendige sti.
- * @param {string} filePath - Stien til filen, der skal gemmes.
- */
 function ensureDirectoryExistence(filePath) {
   const dirname = path.dirname(filePath);
   if (!fs.existsSync(dirname)) {
@@ -24,9 +16,6 @@ function ensureDirectoryExistence(filePath) {
   }
 }
 
-/**
- * Finder alle top-niveau mapper i `json/` for at identificere datatyper.
- */
 function getTopLevelFolders() {
   return fs.readdirSync(jsonDir, { withFileTypes: true })
     .filter(dirent => dirent.isDirectory())
@@ -36,19 +25,32 @@ function getTopLevelFolders() {
 const topLevelFolders = getTopLevelFolders();
 
 /**
- * Bestemmer hvilket prefix, der skal bruges for en reference.
- * Hvis referencen matcher en mappe i `json/`, bruges den som prefix.
+ * Bestemmer om en reference er intern (i samme fil) eller ekstern (fra en anden fil)
+ * @param {string} reference - Referencen der skal tjekkes
+ * @param {string} currentFolder - Den nuværende mappe vi er i
+ * @returns {boolean} - true hvis referencen er ekstern
  */
-function determinePrefix(reference) {
-  return topLevelFolders.includes(reference) ? `${reference}.` : "";
+function isExternalReference(reference, currentFolder) {
+  const refFolder = reference.split('.')[0];
+  return refFolder !== currentFolder;
 }
 
 /**
- * Finder alle filer i `json/`, der kan importeres (bortset fra den fil, vi genererer).
+ * Bestemmer hvilket prefix der skal bruges baseret på om referencen er intern eller ekstern
+ * @param {string} reference - Referencen der skal have prefix
+ * @param {string} currentFolder - Den nuværende mappe vi er i
  */
+function determinePrefix(reference, currentFolder) {
+  if (!isExternalReference(reference, currentFolder)) {
+    return "";
+  }
+  const refFolder = reference.split('.')[0];
+  return topLevelFolders.includes(refFolder) ? `${refFolder}.` : "";
+}
+
 function getAllValidImports(relativePath) {
   return topLevelFolders
-    .filter(folder => folder !== relativePath.split("/")[0]) // Undgå at importere sig selv
+    .filter(folder => folder !== relativePath.split("/")[0])
     .flatMap(folder => {
       const dir = path.join(tsDir, folder);
       if (!fs.existsSync(dir)) return [];
@@ -58,16 +60,10 @@ function getAllValidImports(relativePath) {
     });
 }
 
-/**
- * Bestemmer afhængigheder baseret på JSON-filens placering.
- */
 function determineDependencies(relativePath) {
   return getAllValidImports(relativePath);
 }
 
-/**
- * Fjerner "value" nøglen og erstatter med dens værdi.
- */
 function removeValueKeys(obj) {
   if (typeof obj !== "object" || obj === null) return obj;
   if ("value" in obj && Object.keys(obj).length === 1) {
@@ -77,17 +73,19 @@ function removeValueKeys(obj) {
 }
 
 /**
- * Konverter JSON til en TypeScript-venlig string med korrekt formatering.
+ * Formaterer JSON til TypeScript med korrekt håndtering af interne og eksterne referencer
+ * @param {object} obj - JSON objektet der skal formateres
+ * @param {string} currentFolder - Den nuværende mappe vi er i
  */
-function formatJsonForTs(obj) {
+function formatJsonForTs(obj, currentFolder) {
   return JSON.stringify(obj, null, 2)
     .replace(/"([^"]+)":/g, (match, p1) => (p1.includes("-") ? `'${p1}':` : `${p1}:`))
     .replace(/"\{([^}]+)\}"/g, (match, p1) => {
       const parts = p1.split(".");
-      const reference = parts[0]; // Første del af referencen
-
-      // Find korrekt prefix baseret på top-level folders
-      const prefix = determinePrefix(reference);
+      const reference = parts[0];
+      
+      // Bestem prefix baseret på om referencen er intern eller ekstern
+      const prefix = determinePrefix(p1, currentFolder);
 
       if (parts.length === 2) {
         return `${prefix}${parts[0]}['${parts[1]}']`;
@@ -99,11 +97,9 @@ function formatJsonForTs(obj) {
     .replace(/"([^"]+)"/g, "'$1'");
 }
 
-/**
- * Konverterer en JSON-fil til en TypeScript-fil.
- */
 function convertJsonToTs(jsonPath) {
   const relativePath = path.relative(jsonDir, jsonPath);
+  const currentFolder = relativePath.split(path.sep)[0];
   const tsPath = path.join(tsDir, relativePath.replace(/\.json$/, ".ts"));
   const moduleName = path.basename(tsPath, ".ts").replace(/-/g, "_");
 
@@ -122,7 +118,7 @@ function convertJsonToTs(jsonPath) {
         .map(dep => `import * as ${path.basename(dep).replace(/-/g, "_")} from '${dep}';`)
         .join("\n");
 
-      const formattedJson = formatJsonForTs(jsonData);
+      const formattedJson = formatJsonForTs(jsonData, currentFolder);
       const tsContent = `${imports}\n\nexport const ${moduleName} = ${formattedJson};`;
 
       ensureDirectoryExistence(tsPath);
@@ -140,9 +136,6 @@ function convertJsonToTs(jsonPath) {
   });
 }
 
-/**
- * Rekursiv scanning af hele `json/`-mappen og konvertering af eksisterende JSON-filer.
- */
 function convertAllExistingJson(dir = jsonDir) {
   fs.readdirSync(dir, { withFileTypes: true }).forEach(dirent => {
     const fullPath = path.join(dir, dirent.name);
@@ -154,7 +147,6 @@ function convertAllExistingJson(dir = jsonDir) {
   });
 }
 
-// 🚀 Kør konvertering for alle eksisterende JSON-filer
+// Start konvertering
 convertAllExistingJson();
-
 console.log("👀 Overvåger JSON-filer i:", jsonDir);
