@@ -159,18 +159,20 @@ function convertJsonToTs(jsonPath) {
 }
 
 /**
- * Gennemgår hele `json/`-mappen og konverterer alle eksisterende JSON-filer til TypeScript-filer.
+ * Gennemgår `json/`-mappen rekursivt og konverterer alle JSON-filer til TypeScript.
  */
-function convertAllExistingJson() {
-  fs.readdirSync(jsonDir, { withFileTypes: true }).forEach(dirent => {
-    const fullPath = path.join(jsonDir, dirent.name);
-    if (dirent.isFile() && dirent.name.endsWith(".json")) {
+function convertAllExistingJson(dir = jsonDir) {
+  fs.readdirSync(dir, { withFileTypes: true }).forEach(dirent => {
+    const fullPath = path.join(dir, dirent.name);
+    if (dirent.isDirectory()) {
+      convertAllExistingJson(fullPath); // Rekursivt scan undermapper
+    } else if (dirent.isFile() && dirent.name.endsWith(".json")) {
       convertJsonToTs(fullPath);
     }
   });
 }
 
-// 🚀 Konverter alle eksisterende JSON-filer ved opstart
+// 🚀 Kør konvertering for alle eksisterende JSON-filer
 convertAllExistingJson();
 
 console.log("👀 Overvåger JSON-filer i:", jsonDir);
