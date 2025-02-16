@@ -37,6 +37,7 @@ const topLevelFolders = getTopLevelFolders();
 
 /**
  * Bestemmer hvilket prefix, der skal bruges for en reference.
+ * Hvis referencen matcher en mappe i `json/`, bruges den som prefix.
  */
 function determinePrefix(reference) {
   return topLevelFolders.includes(reference) ? `${reference}.` : "";
@@ -81,7 +82,7 @@ function removeValueKeys(obj) {
 function formatJsonForTs(obj) {
   return JSON.stringify(obj, null, 2)
     .replace(/"([^"]+)":/g, (match, p1) => (p1.includes("-") ? `'${p1}':` : `${p1}:`))
-    .replace(/"\{([^}]+)\}"/g, (match, p1) => { 
+    .replace(/"\{([^}]+)\}"/g, (match, p1) => {
       const parts = p1.split(".");
       const reference = parts[0]; // Første del af referencen
 
