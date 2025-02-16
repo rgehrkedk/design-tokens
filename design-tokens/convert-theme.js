@@ -50,7 +50,7 @@ function getAllBrandImports() {
 /**
  * Bestemmer, hvilke filer der skal importeres i den genererede TypeScript-fil.
  * - `brand/*.ts` importeres IKKE i andre brands
- * - `theme/*.ts` importerer ALLE `brand/*.ts`
+ * - `theme/*.ts` importerer ALLE `brand/*.ts` og `globals.ts`
  * 
  * @param {string} relativePath - Stien til filen relativt til `json/` mappen.
  * @returns {string[]} - En liste af afhængigheder (import-stier).
@@ -60,6 +60,7 @@ function determineDependencies(relativePath) {
 
   if (relativePath.startsWith("theme/")) {
     dependencies.push(...getAllBrandImports()); // Dynamisk import af ALLE brands
+    dependencies.push("../globals/default"); // Theme-filer skal også importere globals
   }
 
   return dependencies;
@@ -69,7 +70,8 @@ function determineDependencies(relativePath) {
  * Konverter JSON til en TypeScript-venlig string med korrekt formatering:
  * - Nøgler med `-` omgives af `' '`
  * - Andre nøgler står uden anførselstegn
- * - Værdier har altid `' '` omkring sig
+ * - Værdier, der er referencer (`'{brand.something.xyz}'`), får det korrekte `brand.` eller `globals.` prefix
+ * - Hex-koder og andre værdier forbliver i `' '` 
  * 
  * @param {object} obj - JSON-objektet der skal konverteres.
  * @returns {string} - En korrekt formateret TypeScript-eksport.
@@ -77,7 +79,17 @@ function determineDependencies(relativePath) {
 function formatJsonForTs(obj) {
   return JSON.stringify(obj, null, 2)
     .replace(/"([^"]+)":/g, (match, p1) => (p1.includes("-") ? `'${p1}':` : `${p1}:`)) // ' ' ved bindestreg-nøgler
-    .replace(/"([^"]+)"/g, "'$1'"); // ' ' omkring værdier
+    .replace(/"\{([^}]+)\}"/g, (match, p1) => { 
+      const parts = p1.split('.');
+      if (parts.length === 2) {
+        return `${parts[0]}.${parts[1]}`; // brand.primary
+      } else if (parts.length === 3) {
+        return `${parts[0]}.${parts[1]}['${parts[2]}']`; // brand.primary['300']
+      }
+      return match; // fallback hvis formatet er anderledes
+    })
+    .replace(/\b(brand|globals)\./g, (match, p1) => `${p1}.`) // Sikrer prefix
+    .replace(/"([^"]+)"/g, "'$1'"); // ' ' omkring alle andre værdier
 }
 
 /**
@@ -154,7 +166,7 @@ convertAllExistingJson();
 
 // 🔍 **Overvåg ændringer i JSON-mappen**
 chokidar.watch(`${jsonDir}/**/*.json`, { persistent: true })
-  .on('add', convertJsonToTs)     // Når en ny fil tilføjes
-  .on('change', convertJsonToTs); // Når en eksisterende fil ændres
+  .on('add', convertJsonToTs)    
+  .on('change', convertJsonToTs);
 
 console.log("👀 Overvåger JSON-filer i:", jsonDir);
