@@ -8,6 +8,9 @@ const __dirname = path.dirname(__filename);
 const jsonDir = path.join(__dirname, "json");
 const tsDir = path.join(__dirname, "ts");
 
+// Cache for at gemme hvor symboler er defineret
+const symbolDefinitionCache = new Map();
+
 function ensureDirectoryExistence(filePath) {
   const dirname = path.dirname(filePath);
   if (!fs.existsSync(dirname)) {
@@ -15,76 +18,61 @@ function ensureDirectoryExistence(filePath) {
   }
 }
 
-// Cache for at holde styr på hvilken mappe hver fil tilhører
-const fileToFolderCache = new Map();
-
 /**
- * Finder top-level mapperne i json/
+ * Scanner alle JSON filer for at bygge et map over hvor symboler er defineret
  */
-function getTopLevelFolders() {
-  return fs.readdirSync(jsonDir, { withFileTypes: true })
-    .filter(dirent => dirent.isDirectory())
-    .map(dirent => dirent.name);
-}
-
-const topLevelFolders = getTopLevelFolders();
-
-/**
- * Finder den top-level mappe som en reference tilhører
- */
-function findParentFolder(identifier) {
-  // Gennemgå alle top-level mapper
-  for (const folder of topLevelFolders) {
-    const folderPath = path.join(jsonDir, folder);
-    if (!fs.existsSync(folderPath)) continue;
-
-    // Tjek om identifier findes som en fil i denne mappe
-    try {
-      const files = fs.readdirSync(folderPath);
-      if (files.some(file => 
-        file === identifier + '.json' || 
-        file.startsWith(identifier + '.')
-      )) {
-        return folder;
+function buildSymbolDefinitionMap() {
+  function scanDirectory(dir) {
+    const files = fs.readdirSync(dir, { withFileTypes: true });
+    
+    for (const file of files) {
+      const fullPath = path.join(dir, file.name);
+      
+      if (file.isDirectory()) {
+        scanDirectory(fullPath);
+      } else if (file.isFile() && file.name.endsWith('.json')) {
+        const content = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+        const relativePath = path.relative(jsonDir, dir);
+        const topLevelKeys = Object.keys(content);
+        
+        for (const key of topLevelKeys) {
+          symbolDefinitionCache.set(key, relativePath.split(path.sep)[0]);
+        }
       }
-    } catch (error) {
-      console.error(`Fejl ved læsning af mappe ${folderPath}:`, error);
     }
   }
-  return null;
+
+  scanDirectory(jsonDir);
 }
 
 /**
- * Bestemmer den nuværende mappe for en given filsti
+ * Finder hvilken mappe et symbol er defineret i
  */
-function getCurrentFolder(filePath) {
-  const relativePath = path.relative(tsDir, filePath);
-  return relativePath.split(path.sep)[0];
+function findSymbolDefinition(symbol) {
+  return symbolDefinitionCache.get(symbol);
 }
 
 /**
  * Konverterer JSON-værdier til TypeScript med korrekte prefixes
  */
-function formatJsonForTs(obj, currentFilePath) {
+function formatJsonForTs(obj, currentFolder) {
   return JSON.stringify(obj, null, 2)
     .replace(/"([^"]+)":/g, (match, p1) => (p1.includes("-") ? `'${p1}':` : `${p1}:`))
     .replace(/"\{([^}]+)\}"/g, (match, p1) => {
       const parts = p1.split(".");
-      const identifier = parts[0];
-      const currentFolder = getCurrentFolder(currentFilePath);
+      const firstPart = parts[0];
       
-      // Find hvilken mappe referencen tilhører
-      const parentFolder = findParentFolder(identifier);
+      // Find parent folder for symbolet
+      const symbolFolder = findSymbolDefinition(firstPart);
       
-      // Hvis referencen findes i en anden mappe end den nuværende fil,
-      // og den mappe er en af vores top-level mapper, tilføj prefix
-      const needsPrefix = parentFolder && currentFolder !== parentFolder;
-      const prefix = needsPrefix ? `${parentFolder}.` : '';
+      // Tilføj prefix hvis symbolet er defineret i en anden mappe
+      const needsPrefix = symbolFolder && symbolFolder !== currentFolder;
+      const prefix = needsPrefix ? `${symbolFolder}.` : '';
       
       if (parts.length === 2) {
-        return `${prefix}${identifier}['${parts[1]}']`;
+        return `${prefix}${firstPart}['${parts[1]}']`;
       } else if (parts.length >= 3) {
-        return `${prefix}${identifier}.${parts[1]}${parts.slice(2).map(p => `['${p}']`).join('')}`;
+        return `${prefix}${firstPart}.${parts[1]}${parts.slice(2).map(p => `['${p}']`).join('')}`;
       }
       
       return match;
@@ -94,6 +82,7 @@ function formatJsonForTs(obj, currentFilePath) {
 
 function convertJsonToTs(jsonPath) {
   const relativePath = path.relative(jsonDir, jsonPath);
+  const currentFolder = relativePath.split(path.sep)[0];
   const tsPath = path.join(tsDir, relativePath.replace(/\.json$/, ".ts"));
   const moduleName = path.basename(tsPath, ".ts").replace(/-/g, "_");
 
@@ -105,10 +94,9 @@ function convertJsonToTs(jsonPath) {
 
     try {
       let jsonData = JSON.parse(data);
-      // Fjern value keys hvis nødvendigt
       jsonData = removeValueKeys(jsonData);
 
-      const formattedJson = formatJsonForTs(jsonData, tsPath);
+      const formattedJson = formatJsonForTs(jsonData, currentFolder);
       const tsContent = `export const ${moduleName} = ${formattedJson};`;
 
       ensureDirectoryExistence(tsPath);
@@ -135,6 +123,10 @@ function removeValueKeys(obj) {
 }
 
 function convertAllExistingJson(dir = jsonDir) {
+  // Først bygger vi symbol definition map
+  buildSymbolDefinitionMap();
+  
+  // Derefter konverterer vi filerne
   fs.readdirSync(dir, { withFileTypes: true }).forEach(dirent => {
     const fullPath = path.join(dir, dirent.name);
     if (dirent.isDirectory()) {
