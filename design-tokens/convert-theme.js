@@ -25,16 +25,36 @@ function ensureDirectoryExistence(filePath) {
 }
 
 /**
- * Finder alle brands i `brand/`-mappen og returnerer deres relative stier.
- * @returns {string[]} - Liste af brand-import-stier.
+ * Finder alle undermapper i `json/` for at identificere typer af data.
+ * Returnerer en liste af de top-niveau mapper (fx. "brand", "globals", "theme").
  */
-function getAllBrandImports() {
-  const brandDir = path.join(tsDir, "brand");
-  if (!fs.existsSync(brandDir)) return [];
+function getTopLevelFolders() {
+  return fs.readdirSync(jsonDir, { withFileTypes: true })
+    .filter(dirent => dirent.isDirectory())
+    .map(dirent => dirent.name);
+}
 
-  return fs.readdirSync(brandDir)
-    .filter(file => file.endsWith(".ts")) // Kun TypeScript-filer
-    .map(file => `../brand/${file.replace(".ts", "")}`); // Returnér relative import-stier
+// Hent alle top-niveau mapper (fx. ["brand", "globals", "theme"])
+const topLevelFolders = getTopLevelFolders();
+
+/**
+ * Bestemmer prefix dynamisk afhængigt af mappen.
+ * 
+ * - Hvis en JSON-fil ligger i en af de registrerede mapper (`brand`, `globals`, etc.),
+ *   bruger vi dens navn som prefix.
+ * - Hvis filen ligger i `theme/`, antager vi, at den skal referere til `brand`.
+ * 
+ * @param {string} relativePath - Stien til filen relativt til `json/` mappen.
+ * @returns {string} - Dynamisk genereret prefix.
+ */
+function determinePrefix(relativePath) {
+  const folderName = relativePath.split("/")[0]; // Første mappe i stien
+
+  if (topLevelFolders.includes(folderName)) {
+    return `${folderName}.`; // Eks: "brand.", "globals."
+  }
+
+  return "brand."; // Default til "brand." hvis den er i `theme/`
 }
 
 /**
@@ -50,7 +70,7 @@ function determineDependencies(relativePath) {
 
   if (relativePath.startsWith("theme/")) {
     dependencies.push(...getAllBrandImports()); // Dynamisk import af ALLE brands
-    dependencies.push("../globals/default"); // Theme-filer skal også importere globals
+    dependencies.push(`../globals/default`); // Theme-filer skal også importere globals
   }
 
   return dependencies;
@@ -78,11 +98,11 @@ function removeValueKeys(obj) {
  * - Nøgler med `-` omgives af `' '`
  * - Andre nøgler står uden anførselstegn
  * - Værdier, der er referencer (`'{neutrals.alpha.900.10}'`), konverteres til `brand.neutrals.alpha['900']['10']`
- * - Prefix `brand.` eller `globals.` tilføjes korrekt
+ * - Prefix `brand.` eller `globals.` tilføjes dynamisk
  * - Hex-koder og andre værdier forbliver i `' '` 
  * 
  * @param {object} obj - JSON-objektet der skal konverteres.
- * @param {string} prefix - Prefix afhængigt af JSON-stien (`brand.` eller `globals.`).
+ * @param {string} prefix - Dynamisk prefix afhængigt af JSON-stien.
  * @returns {string} - En korrekt formateret TypeScript-eksport.
  */
 function formatJsonForTs(obj, prefix) {
@@ -114,8 +134,8 @@ function convertJsonToTs(jsonPath) {
   const relativePath = path.relative(jsonDir, jsonPath);
   const tsPath = path.join(tsDir, relativePath.replace(/\.json$/, ".ts"));
 
-  // Bestem prefix afhængigt af mappen (brand eller globals)
-  const prefix = relativePath.startsWith("brand/") ? "brand." : relativePath.startsWith("globals/") ? "globals." : "brand.";
+  // Dynamisk prefix afhængigt af mappen
+  const prefix = determinePrefix(relativePath);
 
   // Generér et gyldigt TypeScript variabelnavn
   const moduleName = path.basename(tsPath, ".ts").replace(/-/g, "_");
@@ -154,20 +174,6 @@ function convertJsonToTs(jsonPath) {
       });
     } catch (parseError) {
       console.error(`❌ Fejl ved parsing af JSON i ${jsonPath}:`, parseError);
-    }
-  });
-}
-
-/**
- * Gennemgår `json/`-mappen rekursivt og konverterer alle JSON-filer til TypeScript.
- */
-function convertAllExistingJson(dir = jsonDir) {
-  fs.readdirSync(dir, { withFileTypes: true }).forEach(dirent => {
-    const fullPath = path.join(dir, dirent.name);
-    if (dirent.isDirectory()) {
-      convertAllExistingJson(fullPath); // Rekursivt scan undermapper
-    } else if (dirent.isFile() && dirent.name.endsWith(".json")) {
-      convertJsonToTs(fullPath);
     }
   });
 }
