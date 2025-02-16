@@ -40,7 +40,7 @@ function getAllBrandImports() {
 /**
  * Bestemmer, hvilke filer der skal importeres i den genererede TypeScript-fil.
  * - `brand/*.ts` importeres IKKE i andre brands
- * - `theme/*.ts` importerer ALLE `brand/*.ts` og `globals.ts`
+ * - `theme/*.ts` (inklusiv `light-mode.ts` og `dark-mode.ts`) importerer ALLE `brand/*.ts` og `globals.ts`
  * 
  * @param {string} relativePath - Stien til filen relativt til `json/` mappen.
  * @returns {string[]} - En liste af afhængigheder (import-stier).
@@ -152,24 +152,6 @@ function convertJsonToTs(jsonPath) {
       console.error(`❌ Fejl ved parsing af JSON i ${jsonPath}:`, parseError);
     }
   });
-}
-
-/**
- * Gennemgår hele `json/`-mappen og konverterer alle eksisterende JSON-filer til TypeScript-filer.
- */
-function convertAllExistingJson() {
-  function scanDir(dir) {
-    fs.readdirSync(dir, { withFileTypes: true }).forEach(dirent => {
-      const fullPath = path.join(dir, dirent.name);
-      if (dirent.isDirectory()) {
-        scanDir(fullPath); // Hvis det er en mappe, scan den rekursivt
-      } else if (dirent.isFile() && dirent.name.endsWith(".json")) {
-        convertJsonToTs(fullPath);
-      }
-    });
-  }
-  console.log("🔄 Konverterer eksisterende JSON-filer...");
-  scanDir(jsonDir);
 }
 
 // 🚀 **Konverter alle eksisterende JSON-filer ved scriptets opstart**
