@@ -154,12 +154,25 @@ function convertJsonToTs(jsonPath) {
   });
 }
 
-// 🚀 **Konverter alle eksisterende JSON-filer ved scriptets opstart**
-convertAllExistingJson();
+/**
+ * Gennemgår hele `json/`-mappen og konverterer alle eksisterende JSON-filer til TypeScript-filer.
+ */
+function convertAllExistingJson() {
+  function scanDir(dir) {
+    fs.readdirSync(dir, { withFileTypes: true }).forEach(dirent => {
+      const fullPath = path.join(dir, dirent.name);
+      if (dirent.isDirectory()) {
+        scanDir(fullPath); // Hvis det er en mappe, scan den rekursivt
+      } else if (dirent.isFile() && dirent.name.endsWith(".json")) {
+        convertJsonToTs(fullPath);
+      }
+    });
+  }
+  console.log("🔄 Konverterer eksisterende JSON-filer...");
+  scanDir(jsonDir);
+}
 
-// 🔍 **Overvåg ændringer i JSON-mappen**
-chokidar.watch(`${jsonDir}/**/*.json`, { persistent: true })
-  .on('add', convertJsonToTs)    
-  .on('change', convertJsonToTs);
+// 🚀 Kald funktionen korrekt
+convertAllExistingJson();
 
 console.log("👀 Overvåger JSON-filer i:", jsonDir);
