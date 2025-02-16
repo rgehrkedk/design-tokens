@@ -3,15 +3,15 @@ import path from "path";
 import { fileURLToPath } from "url";
 import chokidar from "chokidar";
 
-// Håndter __dirname i ES Modules (da __dirname ikke findes naturligt i ESM).
+// Håndter __dirname i ES Modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 /**
  * Stier til JSON input-mappen og TypeScript output-mappen.
  */
-const jsonDir = path.join(__dirname, "json");
-const tsDir = path.join(__dirname, "ts");
+const jsonDir = path.join(__dirname, "json"); // Input-mappe med JSON-filer
+const tsDir = path.join(__dirname, "ts"); // Output-mappe med TypeScript-filer
 
 /**
  * Sikrer, at en mappe eksisterer. Hvis ikke, opretter den den nødvendige sti.
@@ -31,7 +31,7 @@ function ensureDirectoryExistence(filePath) {
  * @returns {string} - Et gyldigt variabelnavn.
  */
 function toValidVariableName(name) {
-  return name.replace(/-/g, "_").replace(/\W/g, ""); // Erstat "-" med "_" og fjern ikke-alfanumeriske tegn
+  return name.replace(/-/g, "_").replace(/\W/g, ""); // Erstat "-" med "_", fjern ikke-alfanumeriske tegn
 }
 
 /**
@@ -49,9 +49,8 @@ function getAllBrandImports() {
 
 /**
  * Bestemmer, hvilke filer der skal importeres i den genererede TypeScript-fil.
- * - `brand/*.ts` skal importere `globals.ts` og `theme/*.ts`
- * - `theme/*.ts` skal importere `globals.ts` og ALLE `brand/*.ts`
- * - `globals.ts` har ingen afhængigheder.
+ * - `brand/*.ts` importeres IKKE i andre brands
+ * - `theme/*.ts` importerer ALLE `brand/*.ts`
  * 
  * @param {string} relativePath - Stien til filen relativt til `json/` mappen.
  * @returns {string[]} - En liste af afhængigheder (import-stier).
@@ -59,14 +58,22 @@ function getAllBrandImports() {
 function determineDependencies(relativePath) {
   const dependencies = [];
 
-  if (relativePath.startsWith("brand/")) {
-    dependencies.push("../globals/globals", "../theme/dark-mode", "../theme/light-mode");
-  } else if (relativePath.startsWith("theme/")) {
-    dependencies.push("../globals/globals");
+  if (relativePath.startsWith("theme/")) {
     dependencies.push(...getAllBrandImports()); // Dynamisk import af ALLE brands
   }
 
   return dependencies;
+}
+
+/**
+ * Konverter JSON til en TypeScript-venlig string med enkelt anførselstegn (' ').
+ * @param {object} obj - JSON-objektet der skal konverteres.
+ * @returns {string} - En korrekt formateret TypeScript-eksport.
+ */
+function formatJsonForTs(obj) {
+  return JSON.stringify(obj, null, 2)
+    .replace(/"([^"]+)":/g, "$1:") // Fjerner anførselstegn fra objekt-nøgler
+    .replace(/"([^"]+)"/g, "'$1'"); // Erstatter "værdi" med 'værdi'
 }
 
 /**
@@ -80,7 +87,7 @@ function convertJsonToTs(jsonPath) {
   const relativePath = path.relative(jsonDir, jsonPath);
   const tsPath = path.join(tsDir, relativePath.replace(/\.json$/, ".ts"));
 
-  // Generér et gyldigt TypeScript variabelnavn fra filnavnet
+  // Generér et gyldigt TypeScript variabelnavn
   const moduleName = toValidVariableName(path.basename(tsPath, ".ts"));
 
   fs.readFile(jsonPath, "utf8", (err, data) => {
@@ -96,14 +103,12 @@ function convertJsonToTs(jsonPath) {
 
       // Generér import-sætninger baseret på afhængigheder
       let imports = dependencies
-        .map(dep => {
-          const importVar = toValidVariableName(path.basename(dep)); // Konverter import-navn til en gyldig variabel
-          return `import * as ${importVar} from "${dep}";`;
-        })
+        .map(dep => `import * as ${toValidVariableName(path.basename(dep))} from '${dep}';`)
         .join("\n");
 
-      // Omdan JSON til en gyldig TypeScript-eksport
-      const tsContent = `${imports}\n\nexport const ${moduleName} = ${JSON.stringify(jsonData, null, 2)};`;
+      // Omdan JSON til en gyldig TypeScript-eksport med enkelte anførselstegn
+      const formattedJson = formatJsonForTs(jsonData);
+      const tsContent = `${imports}\n\nexport const ${moduleName} = ${formattedJson};`;
 
       // Sikrer, at outputmappen eksisterer, før vi skriver til filen
       ensureDirectoryExistence(tsPath);
@@ -145,7 +150,7 @@ convertAllExistingJson();
 
 // 🔍 **Overvåg ændringer i JSON-mappen**
 chokidar.watch(`${jsonDir}/**/*.json`, { persistent: true })
-  .on("add", convertJsonToTs)     // Når en ny fil tilføjes
-  .on("change", convertJsonToTs); // Når en eksisterende fil ændres
+  .on('add', convertJsonToTs)     // Når en ny fil tilføjes
+  .on('change', convertJsonToTs); // Når en eksisterende fil ændres
 
 console.log("👀 Overvåger JSON-filer i:", jsonDir);
