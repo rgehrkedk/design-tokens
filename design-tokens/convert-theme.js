@@ -1,6 +1,6 @@
-import { promises as fs } from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -8,79 +8,171 @@ const __dirname = path.dirname(__filename);
 const jsonDir = path.join(__dirname, "json");
 const tsDir = path.join(__dirname, "ts");
 
-// Helper to convert property names
-function sanitizePropertyName(name) {
-  return name.replace(/-./g, x => x[1].toUpperCase());
-}
+// Cache for at gemme hvor symboler er defineret
+const symbolDefinitionCache = new Map();
 
-// Process JSON data
-function processValue(data) {
-  if (typeof data !== 'object' || data === null) return data;
-  
-  const result = Array.isArray(data) ? [] : {};
-  
-  for (const [key, value] of Object.entries(data)) {
-    const sanitizedKey = sanitizePropertyName(key);
-    result[sanitizedKey] = typeof value === 'object' ? processValue(value) : value;
+function ensureDirectoryExistence(filePath) {
+  const dirname = path.dirname(filePath);
+  if (!fs.existsSync(dirname)) {
+    fs.mkdirSync(dirname, { recursive: true });
   }
-  
-  return result;
 }
 
-// Generate TypeScript content
-function generateTsContent(fileName, jsonData) {
-  const baseName = path.basename(fileName, '.json');
-  let tsContent = '';
+/**
+ * Scanner alle JSON filer for at bygge et map over hvor symboler er defineret
+ */
+function buildSymbolDefinitionMap() {
+  function scanDirectory(dir) {
+    const files = fs.readdirSync(dir, { withFileTypes: true });
+    
+    for (const file of files) {
+      const fullPath = path.join(dir, file.name);
+      
+      if (file.isDirectory()) {
+        scanDirectory(fullPath);
+      } else if (file.isFile() && file.name.endsWith('.json')) {
+        const content = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+        const relativePath = path.relative(jsonDir, dir);
+        const topLevelKeys = Object.keys(content);
+        
+        for (const key of topLevelKeys) {
+          symbolDefinitionCache.set(key, relativePath.split(path.sep)[0]);
+        }
+      }
+    }
+  }
+
+  scanDirectory(jsonDir);
+}
+
+/**
+ * Finder hvilken mappe et symbol er defineret i
+ */
+function findSymbolDefinition(symbol) {
+  return symbolDefinitionCache.get(symbol);
+}
+
+/**
+ * Finder alle unikke symboler der er refereret i et objekt
+ */
+function findReferencedSymbols(obj) {
+  const symbols = new Set();
   
-  // Handle different file types
-  if (fileName.includes('brand')) {
-    tsContent = `export const ${baseName} = ${JSON.stringify(processValue(jsonData), null, 2)};\n`;
-  } else if (fileName.includes('globals')) {
-    tsContent = `export const ${baseName} = ${JSON.stringify(processValue(jsonData), null, 2)};\n`;
-  } else {
-    if (fileName.includes('default')) {
-      tsContent = `export default ${JSON.stringify(processValue(jsonData), null, 2)};\n`;
-    } else {
-      tsContent = `export const theme = ${JSON.stringify(processValue(jsonData), null, 2)};\n`;
+  JSON.stringify(obj, (key, value) => {
+    if (typeof value === 'string' && value.startsWith('{') && value.endsWith('}')) {
+      const symbol = value.slice(1, -1).split('.')[0];
+      symbols.add(symbol);
+    }
+    return value;
+  });
+  
+  return Array.from(symbols);
+}
+
+/**
+ * Genererer import statements baseret på referencerede symboler
+ */
+function generateImports(symbols, currentFolder) {
+  const imports = new Set();
+  
+  for (const symbol of symbols) {
+    const parentFolder = findSymbolDefinition(symbol);
+    if (parentFolder && parentFolder !== currentFolder) {
+      imports.add(`import { ${symbol} } from '../${parentFolder}/${symbol}';`);
     }
   }
   
-  return tsContent;
+  return Array.from(imports).join('\n');
 }
 
-// Convert JSON to TypeScript
-async function convertJsonToTs(jsonPath) {
-  try {
-    const jsonContent = await fs.readFile(jsonPath, 'utf8');
-    const jsonData = JSON.parse(jsonContent);
-    
-    const relativePath = path.relative(jsonDir, jsonPath);
-    const tsPath = path.join(tsDir, relativePath.replace('.json', '.ts'));
-    
-    await fs.mkdir(path.dirname(tsPath), { recursive: true });
-    const tsContent = generateTsContent(jsonPath, jsonData);
-    await fs.writeFile(tsPath, tsContent);
-    
-    console.log(`Converted: ${jsonPath} → ${tsPath}`);
-  } catch (error) {
-    console.error(`Error converting ${jsonPath}:`, error);
-  }
+/**
+ * Konverterer JSON-værdier til TypeScript med korrekte prefixes
+ */
+function formatJsonForTs(obj, currentFolder) {
+  return JSON.stringify(obj, null, 2)
+    .replace(/"([^"]+)":/g, (match, p1) => (p1.includes("-") ? `'${p1}':` : `${p1}:`))
+    .replace(/"\{([^}]+)\}"/g, (match, p1) => {
+      const parts = p1.split(".");
+      const firstPart = parts[0];
+      
+      // Find parent folder for symbolet
+      const symbolFolder = findSymbolDefinition(firstPart);
+      
+      // Altid tilføj prefix hvis symbolet er defineret i en mappe
+      const prefix = symbolFolder ? `${symbolFolder}.` : '';
+      
+      if (parts.length === 2) {
+        return `${prefix}${firstPart}['${parts[1]}']`;
+      } else if (parts.length >= 3) {
+        return `${prefix}${firstPart}.${parts[1]}${parts.slice(2).map(p => `['${p}']`).join('')}`;
+      }
+      
+      return match;
+    })
+    .replace(/"([^"]+)"/g, "'$1'");
 }
 
-// Process all JSON files
-async function convertAllExistingJson(dir = jsonDir) {
-  const entries = await fs.readdir(dir, { withFileTypes: true });
-  
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      await convertAllExistingJson(fullPath);
-    } else if (entry.isFile() && entry.name.endsWith('.json')) {
-      await convertJsonToTs(fullPath);
+function convertJsonToTs(jsonPath) {
+  const relativePath = path.relative(jsonDir, jsonPath);
+  const currentFolder = relativePath.split(path.sep)[0];
+  const tsPath = path.join(tsDir, relativePath.replace(/\.json$/, ".ts"));
+  const moduleName = path.basename(tsPath, ".ts").replace(/-/g, "_");
+
+  fs.readFile(jsonPath, "utf8", (err, data) => {
+    if (err) {
+      console.error(`❌ Fejl ved læsning af ${jsonPath}:`, err);
+      return;
     }
-  }
+
+    try {
+      let jsonData = JSON.parse(data);
+      jsonData = removeValueKeys(jsonData);
+
+      // Find referencerede symboler og generer imports
+      const referencedSymbols = findReferencedSymbols(jsonData);
+      const imports = generateImports(referencedSymbols, currentFolder);
+      
+      const formattedJson = formatJsonForTs(jsonData, currentFolder);
+      const tsContent = `${imports}\n\nexport const ${moduleName} = ${formattedJson};`;
+
+      ensureDirectoryExistence(tsPath);
+
+      fs.writeFile(tsPath, tsContent, "utf8", (err) => {
+        if (err) {
+          console.error(`❌ Fejl ved skrivning af ${tsPath}:`, err);
+        } else {
+          console.log(`✅ Konverteret: ${jsonPath} → ${tsPath}`);
+        }
+      });
+    } catch (parseError) {
+      console.error(`❌ Fejl ved parsing af JSON i ${jsonPath}:`, parseError);
+    }
+  });
 }
 
-// Start conversion
-convertAllExistingJson().catch(console.error);
-console.log(`Watching JSON files in: ${jsonDir}`);
+function removeValueKeys(obj) {
+  if (typeof obj !== "object" || obj === null) return obj;
+  if ("value" in obj && Object.keys(obj).length === 1) {
+    return obj.value;
+  }
+  return Object.fromEntries(Object.entries(obj).map(([key, value]) => [key, removeValueKeys(value)]));
+}
+
+function convertAllExistingJson(dir = jsonDir) {
+  // Først bygger vi symbol definition map
+  buildSymbolDefinitionMap();
+  
+  // Derefter konverterer vi filerne
+  fs.readdirSync(dir, { withFileTypes: true }).forEach(dirent => {
+    const fullPath = path.join(dir, dirent.name);
+    if (dirent.isDirectory()) {
+      convertAllExistingJson(fullPath);
+    } else if (dirent.isFile() && dirent.name.endsWith(".json")) {
+      convertJsonToTs(fullPath);
+    }
+  });
+}
+
+// Start konvertering
+convertAllExistingJson();
+console.log("👀 Overvåger JSON-filer i:", jsonDir);
