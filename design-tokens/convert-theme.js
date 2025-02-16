@@ -1,7 +1,6 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import chokidar from "chokidar";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,6 +15,12 @@ function ensureDirectoryExistence(filePath) {
   }
 }
 
+// Cache for at holde styr på hvilken mappe hver fil tilhører
+const fileToFolderCache = new Map();
+
+/**
+ * Finder top-level mapperne i json/
+ */
 function getTopLevelFolders() {
   return fs.readdirSync(jsonDir, { withFileTypes: true })
     .filter(dirent => dirent.isDirectory())
@@ -25,95 +30,79 @@ function getTopLevelFolders() {
 const topLevelFolders = getTopLevelFolders();
 
 /**
- * Finder den top-level mappe som en reference tilhører
- * @param {string} reference - Referencen der skal tjekkes (fx 'neutrals')
- * @returns {string|null} - Top-level mappens navn eller null hvis ikke fundet
+ * Finder den top-level mappe som en fil eller reference tilhører
  */
-function findParentFolder(reference) {
-  // Gennemgå alle top-level mapper og check deres indhold
+function findParentFolder(identifier, currentFilePath = null) {
+  // Hvis vi har en filsti og den er i cachen, brug det
+  if (currentFilePath && fileToFolderCache.has(currentFilePath)) {
+    return fileToFolderCache.get(currentFilePath);
+  }
+
+  // Find parent folder ved at analysere mappestrukturen
   for (const folder of topLevelFolders) {
     const folderPath = path.join(tsDir, folder);
     if (!fs.existsSync(folderPath)) continue;
-    
-    // Check om referencen findes som en fil i denne mappe
+
     const files = fs.readdirSync(folderPath);
-    if (files.some(file => file.startsWith(reference + '.') || file === reference + '.ts')) {
+    const matchingFile = files.find(file => 
+      file === identifier + '.ts' || 
+      file === identifier + '.json' ||
+      file.startsWith(identifier + '.')
+    );
+
+    if (matchingFile) {
+      // Gem i cache hvis vi har en filsti
+      if (currentFilePath) {
+        fileToFolderCache.set(currentFilePath, folder);
+      }
       return folder;
     }
   }
+
   return null;
 }
 
 /**
- * Bestemmer om en reference er intern (i samme fil) eller ekstern (fra en anden fil)
- * @param {string} reference - Referencen der skal tjekkes
- * @param {string} currentFolder - Den nuværende mappe vi er i
- * @returns {boolean} - true hvis referencen er ekstern
+ * Bestemmer om en reference skal have prefix baseret på dens kontekst
  */
-function isExternalReference(reference, currentFolder) {
-  const parentFolder = findParentFolder(reference);
-  return parentFolder !== null && parentFolder !== currentFolder;
-}
-
-/**
- * Bestemmer hvilket prefix der skal bruges baseret på om referencen er intern eller ekstern
- * @param {string} reference - Referencen der skal have prefix
- * @param {string} currentFolder - Den nuværende mappe vi er i
- */
-function determinePrefix(reference, currentFolder) {
-  const firstPart = reference.split('.')[0];
-  const parentFolder = findParentFolder(firstPart);
+function shouldAddPrefix(reference, currentFilePath) {
+  const currentFolder = findParentFolder(path.basename(currentFilePath, '.ts'), currentFilePath);
+  const referenceFolder = findParentFolder(reference.split('.')[0]);
   
-  if (parentFolder && parentFolder !== currentFolder) {
-    return `${parentFolder}.`;
-  }
-  return "";
-}
-
-function getAllValidImports(relativePath) {
-  return topLevelFolders
-    .filter(folder => folder !== relativePath.split("/")[0])
-    .flatMap(folder => {
-      const dir = path.join(tsDir, folder);
-      if (!fs.existsSync(dir)) return [];
-      return fs.readdirSync(dir)
-        .filter(file => file.endsWith(".ts"))
-        .map(file => `../${folder}/${file.replace(".ts", "")}`);
-    });
-}
-
-function determineDependencies(relativePath) {
-  return getAllValidImports(relativePath);
-}
-
-function removeValueKeys(obj) {
-  if (typeof obj !== "object" || obj === null) return obj;
-  if ("value" in obj && Object.keys(obj).length === 1) {
-    return obj.value;
-  }
-  return Object.fromEntries(Object.entries(obj).map(([key, value]) => [key, removeValueKeys(value)]));
+  // Hvis referencen tilhører en anden mappe end den nuværende fil
+  return referenceFolder && currentFolder !== referenceFolder;
 }
 
 /**
- * Formaterer JSON til TypeScript med korrekt håndtering af interne og eksterne referencer
- * @param {object} obj - JSON objektet der skal formateres
- * @param {string} currentFolder - Den nuværende mappe vi er i
+ * Konverterer JSON-værdier til TypeScript med korrekte prefixes
  */
-function formatJsonForTs(obj, currentFolder) {
+function formatJsonForTs(obj, currentFilePath) {
   return JSON.stringify(obj, null, 2)
     .replace(/"([^"]+)":/g, (match, p1) => (p1.includes("-") ? `'${p1}':` : `${p1}:`))
     .replace(/"\{([^}]+)\}"/g, (match, p1) => {
       const parts = p1.split(".");
-      const reference = parts[0];
+      const firstPart = parts[0];
       
-      // Bestem prefix baseret på om referencen er intern eller ekstern
-      const prefix = determinePrefix(p1, currentFolder);
-
-      if (parts.length === 2) {
-        return `${prefix}${parts[0]}['${parts[1]}']`;
-      } else if (parts.length >= 3) {
-        return `${prefix}${parts[0]}.${parts[1]}${parts.slice(2).map(p => `['${p}']`).join('')}`;
+      // Hvis vi skal tilføje prefix
+      if (shouldAddPrefix(firstPart, currentFilePath)) {
+        const parentFolder = findParentFolder(firstPart);
+        if (parentFolder) {
+          // Tilføj prefix til referencen
+          if (parts.length === 2) {
+            return `${parentFolder}.${firstPart}['${parts[1]}']`;
+          } else if (parts.length >= 3) {
+            return `${parentFolder}.${firstPart}.${parts[1]}${parts.slice(2).map(p => `['${p}']`).join('')}`;
+          }
+        }
       }
+      
+      // Hvis vi ikke skal tilføje prefix
+      if (parts.length === 2) {
+        return `${firstPart}['${parts[1]}']`;
+      } else if (parts.length >= 3) {
+        return `${firstPart}.${parts[1]}${parts.slice(2).map(p => `['${p}']`).join('')}`;
+      }
+      
       return match;
     })
     .replace(/"([^"]+)"/g, "'$1'");
@@ -121,7 +110,6 @@ function formatJsonForTs(obj, currentFolder) {
 
 function convertJsonToTs(jsonPath) {
   const relativePath = path.relative(jsonDir, jsonPath);
-  const currentFolder = relativePath.split(path.sep)[0];
   const tsPath = path.join(tsDir, relativePath.replace(/\.json$/, ".ts"));
   const moduleName = path.basename(tsPath, ".ts").replace(/-/g, "_");
 
@@ -133,15 +121,11 @@ function convertJsonToTs(jsonPath) {
 
     try {
       let jsonData = JSON.parse(data);
+      // Fjern value keys hvis nødvendigt
       jsonData = removeValueKeys(jsonData);
-      const dependencies = determineDependencies(relativePath);
 
-      let imports = dependencies
-        .map(dep => `import * as ${path.basename(dep).replace(/-/g, "_")} from '${dep}';`)
-        .join("\n");
-
-      const formattedJson = formatJsonForTs(jsonData, currentFolder);
-      const tsContent = `${imports}\n\nexport const ${moduleName} = ${formattedJson};`;
+      const formattedJson = formatJsonForTs(jsonData, tsPath);
+      const tsContent = `export const ${moduleName} = ${formattedJson};`;
 
       ensureDirectoryExistence(tsPath);
 
@@ -156,6 +140,14 @@ function convertJsonToTs(jsonPath) {
       console.error(`❌ Fejl ved parsing af JSON i ${jsonPath}:`, parseError);
     }
   });
+}
+
+function removeValueKeys(obj) {
+  if (typeof obj !== "object" || obj === null) return obj;
+  if ("value" in obj && Object.keys(obj).length === 1) {
+    return obj.value;
+  }
+  return Object.fromEntries(Object.entries(obj).map(([key, value]) => [key, removeValueKeys(value)]));
 }
 
 function convertAllExistingJson(dir = jsonDir) {
