@@ -25,14 +25,34 @@ function getTopLevelFolders() {
 const topLevelFolders = getTopLevelFolders();
 
 /**
+ * Finder den top-level mappe som en reference tilhører
+ * @param {string} reference - Referencen der skal tjekkes (fx 'neutrals')
+ * @returns {string|null} - Top-level mappens navn eller null hvis ikke fundet
+ */
+function findParentFolder(reference) {
+  // Gennemgå alle top-level mapper og check deres indhold
+  for (const folder of topLevelFolders) {
+    const folderPath = path.join(tsDir, folder);
+    if (!fs.existsSync(folderPath)) continue;
+    
+    // Check om referencen findes som en fil i denne mappe
+    const files = fs.readdirSync(folderPath);
+    if (files.some(file => file.startsWith(reference + '.') || file === reference + '.ts')) {
+      return folder;
+    }
+  }
+  return null;
+}
+
+/**
  * Bestemmer om en reference er intern (i samme fil) eller ekstern (fra en anden fil)
  * @param {string} reference - Referencen der skal tjekkes
  * @param {string} currentFolder - Den nuværende mappe vi er i
  * @returns {boolean} - true hvis referencen er ekstern
  */
 function isExternalReference(reference, currentFolder) {
-  const refFolder = reference.split('.')[0];
-  return refFolder !== currentFolder;
+  const parentFolder = findParentFolder(reference);
+  return parentFolder !== null && parentFolder !== currentFolder;
 }
 
 /**
@@ -41,11 +61,13 @@ function isExternalReference(reference, currentFolder) {
  * @param {string} currentFolder - Den nuværende mappe vi er i
  */
 function determinePrefix(reference, currentFolder) {
-  if (!isExternalReference(reference, currentFolder)) {
-    return "";
+  const firstPart = reference.split('.')[0];
+  const parentFolder = findParentFolder(firstPart);
+  
+  if (parentFolder && parentFolder !== currentFolder) {
+    return `${parentFolder}.`;
   }
-  const refFolder = reference.split('.')[0];
-  return topLevelFolders.includes(refFolder) ? `${refFolder}.` : "";
+  return "";
 }
 
 function getAllValidImports(relativePath) {
