@@ -77,7 +77,8 @@ function removeValueKeys(obj) {
  * Konverter JSON til en TypeScript-venlig string med korrekt formatering:
  * - Nøgler med `-` omgives af `' '`
  * - Andre nøgler står uden anførselstegn
- * - Værdier, der er referencer (`'{brand.something.xyz}'`), får det korrekte `brand.` eller `globals.` prefix
+ * - Værdier, der er referencer (`'{neutrals.alpha.900.10}'`), konverteres til `brand.neutrals.alpha['900']['10']`
+ * - Prefix `brand.` eller `globals.` tilføjes korrekt
  * - Hex-koder og andre værdier forbliver i `' '` 
  * 
  * @param {object} obj - JSON-objektet der skal konverteres.
@@ -157,7 +158,19 @@ function convertJsonToTs(jsonPath) {
   });
 }
 
-// 🚀 Konverter alle eksisterende JSON-filer ved scriptets opstart
+/**
+ * Gennemgår hele `json/`-mappen og konverterer alle eksisterende JSON-filer til TypeScript-filer.
+ */
+function convertAllExistingJson() {
+  fs.readdirSync(jsonDir, { withFileTypes: true }).forEach(dirent => {
+    const fullPath = path.join(jsonDir, dirent.name);
+    if (dirent.isFile() && dirent.name.endsWith(".json")) {
+      convertJsonToTs(fullPath);
+    }
+  });
+}
+
+// 🚀 Konverter alle eksisterende JSON-filer ved opstart
 convertAllExistingJson();
 
 console.log("👀 Overvåger JSON-filer i:", jsonDir);
