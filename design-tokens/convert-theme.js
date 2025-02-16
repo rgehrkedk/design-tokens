@@ -10,8 +10,8 @@ const __dirname = path.dirname(__filename);
 /**
  * Stier til JSON input-mappen og TypeScript output-mappen.
  */
-const jsonDir = path.join(__dirname, "json"); // Input-mappe med JSON-filer
-const tsDir = path.join(__dirname, "ts"); // Output-mappe med TypeScript-filer
+const jsonDir = path.join(__dirname, "json");
+const tsDir = path.join(__dirname, "ts");
 
 /**
  * Sikrer, at en mappe eksisterer. Hvis ikke, opretter den den nødvendige sti.
@@ -66,14 +66,18 @@ function determineDependencies(relativePath) {
 }
 
 /**
- * Konverter JSON til en TypeScript-venlig string med enkelt anførselstegn (' ').
+ * Konverter JSON til en TypeScript-venlig string med korrekt formatering:
+ * - Nøgler med `-` omgives af `' '`
+ * - Andre nøgler står uden anførselstegn
+ * - Værdier har altid `' '` omkring sig
+ * 
  * @param {object} obj - JSON-objektet der skal konverteres.
  * @returns {string} - En korrekt formateret TypeScript-eksport.
  */
 function formatJsonForTs(obj) {
   return JSON.stringify(obj, null, 2)
-    .replace(/"([^"]+)":/g, "$1:") // Fjerner anførselstegn fra objekt-nøgler
-    .replace(/"([^"]+)"/g, "'$1'"); // Erstatter "værdi" med 'værdi'
+    .replace(/"([^"]+)":/g, (match, p1) => (p1.includes("-") ? `'${p1}':` : `${p1}:`)) // ' ' ved bindestreg-nøgler
+    .replace(/"([^"]+)"/g, "'$1'"); // ' ' omkring værdier
 }
 
 /**
@@ -106,7 +110,7 @@ function convertJsonToTs(jsonPath) {
         .map(dep => `import * as ${toValidVariableName(path.basename(dep))} from '${dep}';`)
         .join("\n");
 
-      // Omdan JSON til en gyldig TypeScript-eksport med enkelte anførselstegn
+      // Omdan JSON til en gyldig TypeScript-eksport med korrekt formatering
       const formattedJson = formatJsonForTs(jsonData);
       const tsContent = `${imports}\n\nexport const ${moduleName} = ${formattedJson};`;
 
