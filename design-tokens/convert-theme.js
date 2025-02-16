@@ -30,47 +30,36 @@ function getTopLevelFolders() {
 const topLevelFolders = getTopLevelFolders();
 
 /**
- * Finder den top-level mappe som en fil eller reference tilhører
+ * Finder den top-level mappe som en reference tilhører
  */
-function findParentFolder(identifier, currentFilePath = null) {
-  // Hvis vi har en filsti og den er i cachen, brug det
-  if (currentFilePath && fileToFolderCache.has(currentFilePath)) {
-    return fileToFolderCache.get(currentFilePath);
-  }
-
-  // Find parent folder ved at analysere mappestrukturen
+function findParentFolder(identifier) {
+  // Gennemgå alle top-level mapper
   for (const folder of topLevelFolders) {
-    const folderPath = path.join(tsDir, folder);
+    const folderPath = path.join(jsonDir, folder);
     if (!fs.existsSync(folderPath)) continue;
 
-    const files = fs.readdirSync(folderPath);
-    const matchingFile = files.find(file => 
-      file === identifier + '.ts' || 
-      file === identifier + '.json' ||
-      file.startsWith(identifier + '.')
-    );
-
-    if (matchingFile) {
-      // Gem i cache hvis vi har en filsti
-      if (currentFilePath) {
-        fileToFolderCache.set(currentFilePath, folder);
+    // Tjek om identifier findes som en fil i denne mappe
+    try {
+      const files = fs.readdirSync(folderPath);
+      if (files.some(file => 
+        file === identifier + '.json' || 
+        file.startsWith(identifier + '.')
+      )) {
+        return folder;
       }
-      return folder;
+    } catch (error) {
+      console.error(`Fejl ved læsning af mappe ${folderPath}:`, error);
     }
   }
-
   return null;
 }
 
 /**
- * Bestemmer om en reference skal have prefix baseret på dens kontekst
+ * Bestemmer den nuværende mappe for en given filsti
  */
-function shouldAddPrefix(reference, currentFilePath) {
-  const currentFolder = findParentFolder(path.basename(currentFilePath, '.ts'), currentFilePath);
-  const referenceFolder = findParentFolder(reference.split('.')[0]);
-  
-  // Hvis referencen tilhører en anden mappe end den nuværende fil
-  return referenceFolder && currentFolder !== referenceFolder;
+function getCurrentFolder(filePath) {
+  const relativePath = path.relative(tsDir, filePath);
+  return relativePath.split(path.sep)[0];
 }
 
 /**
@@ -81,26 +70,21 @@ function formatJsonForTs(obj, currentFilePath) {
     .replace(/"([^"]+)":/g, (match, p1) => (p1.includes("-") ? `'${p1}':` : `${p1}:`))
     .replace(/"\{([^}]+)\}"/g, (match, p1) => {
       const parts = p1.split(".");
-      const firstPart = parts[0];
+      const identifier = parts[0];
+      const currentFolder = getCurrentFolder(currentFilePath);
       
-      // Hvis vi skal tilføje prefix
-      if (shouldAddPrefix(firstPart, currentFilePath)) {
-        const parentFolder = findParentFolder(firstPart);
-        if (parentFolder) {
-          // Tilføj prefix til referencen
-          if (parts.length === 2) {
-            return `${parentFolder}.${firstPart}['${parts[1]}']`;
-          } else if (parts.length >= 3) {
-            return `${parentFolder}.${firstPart}.${parts[1]}${parts.slice(2).map(p => `['${p}']`).join('')}`;
-          }
-        }
-      }
+      // Find hvilken mappe referencen tilhører
+      const parentFolder = findParentFolder(identifier);
       
-      // Hvis vi ikke skal tilføje prefix
+      // Hvis referencen findes i en anden mappe end den nuværende fil,
+      // og den mappe er en af vores top-level mapper, tilføj prefix
+      const needsPrefix = parentFolder && currentFolder !== parentFolder;
+      const prefix = needsPrefix ? `${parentFolder}.` : '';
+      
       if (parts.length === 2) {
-        return `${firstPart}['${parts[1]}']`;
+        return `${prefix}${identifier}['${parts[1]}']`;
       } else if (parts.length >= 3) {
-        return `${firstPart}.${parts[1]}${parts.slice(2).map(p => `['${p}']`).join('')}`;
+        return `${prefix}${identifier}.${parts[1]}${parts.slice(2).map(p => `['${p}']`).join('')}`;
       }
       
       return match;
