@@ -25,7 +25,7 @@ function ensureDirectoryExistence(filePath) {
 }
 
 /**
- * Finder alle top-niveau mapper i `json/` for at identificere typer af data.
+ * Finder alle top-niveau mapper i `json/` for at identificere datatyper.
  */
 function getTopLevelFolders() {
   return fs.readdirSync(jsonDir, { withFileTypes: true })
@@ -36,19 +36,18 @@ function getTopLevelFolders() {
 const topLevelFolders = getTopLevelFolders();
 
 /**
- * Dynamisk bestemmelse af prefix baseret på mappe-struktur.
+ * Bestemmer hvilket prefix, der skal bruges for en reference.
  */
-function determinePrefix(relativePath) {
-  const folderName = relativePath.split("/")[0];
-  return topLevelFolders.includes(folderName) ? `${folderName}.` : `${topLevelFolders[0]}.`;
+function determinePrefix(reference) {
+  return topLevelFolders.includes(reference) ? `${reference}.` : "";
 }
 
 /**
- * Finder alle undermapper (bortset fra "theme") og returnerer deres relative stier.
+ * Finder alle filer i `json/`, der kan importeres (bortset fra den fil, vi genererer).
  */
-function getAllCategoryImports() {
+function getAllValidImports(relativePath) {
   return topLevelFolders
-    .filter(folder => folder !== "theme") // Theme skal ikke importeres i sig selv
+    .filter(folder => folder !== relativePath.split("/")[0]) // Undgå at importere sig selv
     .flatMap(folder => {
       const dir = path.join(tsDir, folder);
       if (!fs.existsSync(dir)) return [];
@@ -62,11 +61,7 @@ function getAllCategoryImports() {
  * Bestemmer afhængigheder baseret på JSON-filens placering.
  */
 function determineDependencies(relativePath) {
-  const dependencies = [];
-  if (relativePath.startsWith("theme/")) {
-    dependencies.push(...getAllCategoryImports());
-  }
-  return dependencies;
+  return getAllValidImports(relativePath);
 }
 
 /**
@@ -83,11 +78,16 @@ function removeValueKeys(obj) {
 /**
  * Konverter JSON til en TypeScript-venlig string med korrekt formatering.
  */
-function formatJsonForTs(obj, prefix) {
+function formatJsonForTs(obj) {
   return JSON.stringify(obj, null, 2)
     .replace(/"([^"]+)":/g, (match, p1) => (p1.includes("-") ? `'${p1}':` : `${p1}:`))
     .replace(/"\{([^}]+)\}"/g, (match, p1) => { 
-      const parts = p1.split('.');
+      const parts = p1.split(".");
+      const reference = parts[0]; // Første del af referencen
+
+      // Find korrekt prefix baseret på top-level folders
+      const prefix = determinePrefix(reference);
+
       if (parts.length === 2) {
         return `${prefix}${parts[0]}['${parts[1]}']`;
       } else if (parts.length >= 3) {
@@ -104,7 +104,6 @@ function formatJsonForTs(obj, prefix) {
 function convertJsonToTs(jsonPath) {
   const relativePath = path.relative(jsonDir, jsonPath);
   const tsPath = path.join(tsDir, relativePath.replace(/\.json$/, ".ts"));
-  const prefix = determinePrefix(relativePath);
   const moduleName = path.basename(tsPath, ".ts").replace(/-/g, "_");
 
   fs.readFile(jsonPath, "utf8", (err, data) => {
@@ -122,7 +121,7 @@ function convertJsonToTs(jsonPath) {
         .map(dep => `import * as ${path.basename(dep).replace(/-/g, "_")} from '${dep}';`)
         .join("\n");
 
-      const formattedJson = formatJsonForTs(jsonData, prefix);
+      const formattedJson = formatJsonForTs(jsonData);
       const tsContent = `${imports}\n\nexport const ${moduleName} = ${formattedJson};`;
 
       ensureDirectoryExistence(tsPath);
