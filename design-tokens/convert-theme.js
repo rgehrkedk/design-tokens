@@ -53,6 +53,39 @@ function findSymbolDefinition(symbol) {
 }
 
 /**
+ * Finder alle unikke symboler der er refereret i et objekt
+ */
+function findReferencedSymbols(obj) {
+  const symbols = new Set();
+  
+  JSON.stringify(obj, (key, value) => {
+    if (typeof value === 'string' && value.startsWith('{') && value.endsWith('}')) {
+      const symbol = value.slice(1, -1).split('.')[0];
+      symbols.add(symbol);
+    }
+    return value;
+  });
+  
+  return Array.from(symbols);
+}
+
+/**
+ * Genererer import statements baseret på referencerede symboler
+ */
+function generateImports(symbols, currentFolder) {
+  const imports = new Set();
+  
+  for (const symbol of symbols) {
+    const parentFolder = findSymbolDefinition(symbol);
+    if (parentFolder && parentFolder !== currentFolder) {
+      imports.add(`import { ${symbol} } from '../${parentFolder}/${symbol}';`);
+    }
+  }
+  
+  return Array.from(imports).join('\n');
+}
+
+/**
  * Konverterer JSON-værdier til TypeScript med korrekte prefixes
  */
 function formatJsonForTs(obj, currentFolder) {
@@ -65,9 +98,8 @@ function formatJsonForTs(obj, currentFolder) {
       // Find parent folder for symbolet
       const symbolFolder = findSymbolDefinition(firstPart);
       
-      // Tilføj prefix hvis symbolet er defineret i en anden mappe
-      const needsPrefix = symbolFolder && symbolFolder !== currentFolder;
-      const prefix = needsPrefix ? `${symbolFolder}.` : '';
+      // Altid tilføj prefix hvis symbolet er defineret i en mappe
+      const prefix = symbolFolder ? `${symbolFolder}.` : '';
       
       if (parts.length === 2) {
         return `${prefix}${firstPart}['${parts[1]}']`;
@@ -96,8 +128,12 @@ function convertJsonToTs(jsonPath) {
       let jsonData = JSON.parse(data);
       jsonData = removeValueKeys(jsonData);
 
+      // Find referencerede symboler og generer imports
+      const referencedSymbols = findReferencedSymbols(jsonData);
+      const imports = generateImports(referencedSymbols, currentFolder);
+      
       const formattedJson = formatJsonForTs(jsonData, currentFolder);
-      const tsContent = `export const ${moduleName} = ${formattedJson};`;
+      const tsContent = `${imports}\n\nexport const ${moduleName} = ${formattedJson};`;
 
       ensureDirectoryExistence(tsPath);
 
