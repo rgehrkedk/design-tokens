@@ -25,16 +25,6 @@ function ensureDirectoryExistence(filePath) {
 }
 
 /**
- * Konverterer et filnavn til et gyldigt TypeScript variabelnavn.
- * Fjerner ugyldige tegn og erstatter bindestreger med underscores.
- * @param {string} name - Filnavnet eller en nøgle fra JSON-filen.
- * @returns {string} - Et gyldigt variabelnavn.
- */
-function toValidVariableName(name) {
-  return name.replace(/-/g, "_").replace(/\W/g, ""); // Erstat "-" med "_", fjern ikke-alfanumeriske tegn
-}
-
-/**
  * Finder alle brands i `brand/`-mappen og returnerer deres relative stier.
  * @returns {string[]} - Liste af brand-import-stier.
  */
@@ -67,6 +57,23 @@ function determineDependencies(relativePath) {
 }
 
 /**
+ * Fjerner "value" nøglen og erstatter med selve værdien.
+ * @param {object} obj - JSON-objektet der skal renses.
+ * @returns {object} - Nyt objekt uden "value"-nøgler.
+ */
+function removeValueKeys(obj) {
+  if (typeof obj !== "object" || obj === null) return obj;
+
+  if ("value" in obj && Object.keys(obj).length === 1) {
+    return obj.value; // Hvis eneste nøgle er "value", returnér kun dens værdi
+  }
+
+  return Object.fromEntries(
+    Object.entries(obj).map(([key, value]) => [key, removeValueKeys(value)])
+  );
+}
+
+/**
  * Konverter JSON til en TypeScript-venlig string med korrekt formatering:
  * - Nøgler med `-` omgives af `' '`
  * - Andre nøgler står uden anførselstegn
@@ -74,21 +81,21 @@ function determineDependencies(relativePath) {
  * - Hex-koder og andre værdier forbliver i `' '` 
  * 
  * @param {object} obj - JSON-objektet der skal konverteres.
+ * @param {string} prefix - Prefix afhængigt af JSON-stien (`brand.` eller `globals.`).
  * @returns {string} - En korrekt formateret TypeScript-eksport.
  */
-function formatJsonForTs(obj) {
+function formatJsonForTs(obj, prefix) {
   return JSON.stringify(obj, null, 2)
     .replace(/"([^"]+)":/g, (match, p1) => (p1.includes("-") ? `'${p1}':` : `${p1}:`)) // ' ' ved bindestreg-nøgler
     .replace(/"\{([^}]+)\}"/g, (match, p1) => { 
       const parts = p1.split('.');
       if (parts.length === 2) {
-        return `${parts[0]}.${parts[1]}`; // brand.primary
+        return `${prefix}${parts[0]}['${parts[1]}']`; // brand.primary['300']
       } else if (parts.length === 3) {
-        return `${parts[0]}.${parts[1]}['${parts[2]}']`; // brand.primary['300']
+        return `${prefix}${parts[0]}.${parts[1]}['${parts[2]}']`; // brand.primary['300']
       }
       return match; // fallback hvis formatet er anderledes
     })
-    .replace(/\b(brand|globals)\./g, (match, p1) => `${p1}.`) // Sikrer prefix
     .replace(/"([^"]+)"/g, "'$1'"); // ' ' omkring alle andre værdier
 }
 
@@ -103,8 +110,11 @@ function convertJsonToTs(jsonPath) {
   const relativePath = path.relative(jsonDir, jsonPath);
   const tsPath = path.join(tsDir, relativePath.replace(/\.json$/, ".ts"));
 
+  // Bestem prefix afhængigt af mappen (brand eller globals)
+  const prefix = relativePath.startsWith("brand/") ? "brand." : relativePath.startsWith("globals/") ? "globals." : "";
+
   // Generér et gyldigt TypeScript variabelnavn
-  const moduleName = toValidVariableName(path.basename(tsPath, ".ts"));
+  const moduleName = path.basename(tsPath, ".ts").replace(/-/g, "_");
 
   fs.readFile(jsonPath, "utf8", (err, data) => {
     if (err) {
@@ -114,16 +124,17 @@ function convertJsonToTs(jsonPath) {
 
     try {
       // Parse JSON-indholdet
-      const jsonData = JSON.parse(data);
+      let jsonData = JSON.parse(data);
+      jsonData = removeValueKeys(jsonData); // Fjern "value"-nøglen
       const dependencies = determineDependencies(relativePath);
 
       // Generér import-sætninger baseret på afhængigheder
       let imports = dependencies
-        .map(dep => `import * as ${toValidVariableName(path.basename(dep))} from '${dep}';`)
+        .map(dep => `import * as ${path.basename(dep).replace(/-/g, "_")} from '${dep}';`)
         .join("\n");
 
       // Omdan JSON til en gyldig TypeScript-eksport med korrekt formatering
-      const formattedJson = formatJsonForTs(jsonData);
+      const formattedJson = formatJsonForTs(jsonData, prefix);
       const tsContent = `${imports}\n\nexport const ${moduleName} = ${formattedJson};`;
 
       // Sikrer, at outputmappen eksisterer, før vi skriver til filen
