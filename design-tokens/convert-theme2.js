@@ -31,7 +31,6 @@ function scanBrandDefinitions() {
       fs.readFileSync(path.join(jsonDir, 'brand', brandFile), 'utf8')
     );
 
-    // Store top-level keys for each brand
     brandDefinitions.set(brandName, new Set(Object.keys(content)));
   }
 }
@@ -43,93 +42,73 @@ function isDefinedInBrand(brandName, propertyPath) {
   const brandProps = brandDefinitions.get(brandName);
   if (!brandProps) return false;
 
-  // Check the first segment of the path
   const topLevel = propertyPath.split('.')[0];
   return brandProps.has(topLevel);
 }
 
 /**
- * Parses a reference string into its components
+ * Formats a property accessor for TypeScript
+ * Returns proper bracket or dot notation
  */
-function parseReference(value) {
-  if (typeof value === 'string' && value.startsWith('{') && value.endsWith('}')) {
-    return value.slice(1, -1).split('.');
+function formatPropertyAccessor(part) {
+  // If numeric or contains special characters, use bracket notation
+  if (/^\d+$/.test(part) || part.includes('-') || part.includes(' ')) {
+    return `['${part}']`;
   }
-  return null;
+  return `.${part}`;
 }
 
 /**
- * Creates a proper TypeScript property accessor
+ * Processes a token reference (e.g. "{brand.primary.300}")
  */
-function createPropertyAccessor(propertyPath) {
-  return propertyPath.map(part => {
-    // If the part is numeric or contains special characters, use bracket notation
-    if (/^\d+$/.test(part) || part.includes('-') || part.includes(' ')) {
-      return `["${part}"]`;
-    }
-    return `.${part}`;
-  }).join('');
-}
-
-/**
- * Formats a reference into proper TypeScript code
- */
-function formatReference(source, path) {
-  return `${source}${createPropertyAccessor(path)}`;
-}
-
-/**
- * Determines the correct source for a reference
- */
-function determineReferenceSource(reference, options) {
+function processTokenReference(reference, options = {}) {
   const { currentBrand = '' } = options;
-  const [firstPart, ...rest] = reference;
+  
+  // Remove the curly braces and split into parts
+  const parts = reference.slice(1, -1).split('.');
+  const [firstPart, ...rest] = parts;
 
-  // Self-references in the theme
+  // Determine the base reference
+  let baseReference;
   if (['background', 'foreground', 'components'].includes(firstPart)) {
-    return formatReference(firstPart, rest);
+    baseReference = firstPart;
+  } else if (firstPart === 'brand') {
+    baseReference = `${currentBrand}.brand`;
+  } else if (firstPart === 'feedback') {
+    baseReference = 'globalvalue.feedback';
+  } else if (isDefinedInBrand(currentBrand, firstPart)) {
+    baseReference = currentBrand;
+  } else {
+    baseReference = 'globalvalue';
   }
 
-  // Brand references
-  if (firstPart === 'brand') {
-    return formatReference(currentBrand, ['brand', ...rest]);
-  }
-
-  // Feedback references
-  if (firstPart === 'feedback') {
-    return formatReference('globalvalue.feedback', rest);
-  }
-
-  // Check if property exists in brand
-  if (isDefinedInBrand(currentBrand, firstPart)) {
-    return formatReference(currentBrand, reference);
-  }
-
-  // Default to globalvalue
-  return formatReference('globalvalue', reference);
+  // Build the full reference
+  const propertyPath = firstPart === 'brand' ? rest : parts;
+  const accessors = propertyPath.map(formatPropertyAccessor).join('');
+  
+  return `${baseReference}${accessors}`;
 }
 
 /**
- * Processes a value and its references
+ * Processes a value, handling both direct values and references
  */
 function processValue(value, options = {}) {
   if (value && typeof value === 'object' && 'value' in value) {
-    const reference = parseReference(value.value);
-    if (reference) {
-      return determineReferenceSource(reference, options);
+    if (typeof value.value === 'string' && value.value.startsWith('{')) {
+      return processTokenReference(value.value, options);
     }
     return JSON.stringify(value.value);
   }
 
   if (typeof value === 'string' && value.startsWith('{')) {
-    return processValue({ value }, options);
+    return processTokenReference(value, options);
   }
 
   return JSON.stringify(value);
 }
 
 /**
- * Processes an object's values and maintains the correct structure
+ * Processes an object's values recursively
  */
 function processTokenObject(obj, options = {}) {
   const result = {};
@@ -138,7 +117,9 @@ function processTokenObject(obj, options = {}) {
     if (value && typeof value === 'object' && !('value' in value)) {
       result[key] = processTokenObject(value, options);
     } else {
-      result[key] = processValue(value, options);
+      const processed = processValue(value, options);
+      // If it's a reference (not wrapped in quotes), keep it as is
+      result[key] = processed.startsWith('"') ? processed : processed;
     }
   }
 
@@ -146,36 +127,36 @@ function processTokenObject(obj, options = {}) {
 }
 
 /**
- * Creates the TypeScript content for a theme file
+ * Creates TypeScript content with proper imports and formatting
  */
-function createThemeContent(themeData, options) {
-  const { brandName, variation } = options;
-  const processed = processTokenObject(themeData, { currentBrand: brandName });
+function createTypeScriptContent(data, options) {
+  const { imports = [], exportName, additionalImports = '' } = options;
   
-  // Convert the processed object to a string with proper formatting
-  const content = JSON.stringify(processed, null, 2)
+  const importStatements = imports
+    .map(imp => `import { ${imp.name} } from '${imp.path}';`)
+    .join('\n');
+
+  const processedData = processTokenObject(data, options);
+  
+  // Convert to string with proper formatting
+  const content = JSON.stringify(processedData, null, 2)
     // Format property names
     .replace(/"([^"]+)":/g, (_, p1) => p1.includes('-') ? `'${p1}':` : `${p1}:`)
-    // Clean up the reference strings
-    .replace(/"([^"]+\.[^"]+(?:\["[^"]+"\])*)"/, '$1');
+    // Remove quotes from references
+    .replace(/"([^"]+\.[^"]+(?:\['[^']+'\])*)"(?=,?\n)/g, '$1');
 
-  return `// Generated by convert-theme2.js
-import { globalvalue } from '../globals/globalvalue';
-import { ${brandName} } from '../brand/${brandName}';
-import { ${brandName}components } from '../brand/${brandName}components';
+  return `${importStatements}
+${additionalImports}
 
-export const ${brandName}${variation} = ${content};
+export const ${exportName} = ${content};
 `;
 }
 
 /**
- * Main conversion function
+ * Converts all theme files
  */
 function convertFiles() {
   console.log("🔍 Starting conversion process...");
-
-  // First scan brand definitions
-  console.log("📚 Scanning brand definitions...");
   scanBrandDefinitions();
 
   // Process each brand
@@ -186,40 +167,38 @@ function convertFiles() {
     const brandName = path.basename(brandFile, '.json').replace(/-/g, '');
     console.log(`📦 Processing brand: ${brandName}`);
 
-    // Read and process brand content
+    // Read brand content
     const brandContent = JSON.parse(
       fs.readFileSync(path.join(jsonDir, 'brand', brandFile), 'utf8')
     );
 
-    // Split brand content
+    // Split components into separate file
     const { components, ...brandBase } = brandContent;
 
-    // Process base brand file
-    const processedBase = processTokenObject(brandBase, { currentBrand: brandName });
-    const baseContent = `// Generated by convert-theme2.js
-export const ${brandName} = ${JSON.stringify(processedBase, null, 2)
-  .replace(/"([^"]+)":/g, (_, p1) => p1.includes('-') ? `'${p1}':` : `${p1}:`)
-  .replace(/"([^"]+\.[^"]+(?:\["[^"]+"\])*)"/, '$1')};
-`;
-
-    // Process components file
-    const processedComponents = processTokenObject(components, { currentBrand: brandName });
-    const componentsContent = `// Generated by convert-theme2.js
-import { ${brandName}light } from '../theme/${brandName}light';
-import { ${brandName}dark } from '../theme/${brandName}dark';
-
-export const ${brandName}components = ${JSON.stringify(processedComponents, null, 2)
-  .replace(/"([^"]+)":/g, (_, p1) => p1.includes('-') ? `'${p1}':` : `${p1}:`)
-  .replace(/"([^"]+\.[^"]+(?:\["[^"]+"\])*)"/, '$1')};
-`;
-
-    // Write brand files
+    // Write brand base file
     const basePath = path.join(tsDir, 'brand', `${brandName}.ts`);
-    const componentsPath = path.join(tsDir, 'brand', `${brandName}components.ts`);
-    
     ensureDirectoryExistence(basePath);
-    fs.writeFileSync(basePath, baseContent);
-    fs.writeFileSync(componentsPath, componentsContent);
+    fs.writeFileSync(
+      basePath,
+      createTypeScriptContent(brandBase, {
+        exportName: brandName,
+        currentBrand: brandName
+      })
+    );
+
+    // Write components file
+    const componentsPath = path.join(tsDir, 'brand', `${brandName}components.ts`);
+    fs.writeFileSync(
+      componentsPath,
+      createTypeScriptContent(components, {
+        exportName: `${brandName}components`,
+        currentBrand: brandName,
+        imports: [
+          { name: `${brandName}light`, path: `../theme/${brandName}light` },
+          { name: `${brandName}dark`, path: `../theme/${brandName}dark` }
+        ]
+      })
+    );
 
     // Process theme variations
     ['light', 'dark'].forEach(variation => {
@@ -227,31 +206,36 @@ export const ${brandName}components = ${JSON.stringify(processedComponents, null
         fs.readFileSync(path.join(jsonDir, 'theme', `${variation}.json`), 'utf8')
       );
       
-      const themeOutput = createThemeContent(themeContent, { 
-        brandName, 
-        variation 
-      });
-      
       const themePath = path.join(tsDir, 'theme', `${brandName}${variation}.ts`);
       ensureDirectoryExistence(themePath);
-      fs.writeFileSync(themePath, themeOutput);
+      fs.writeFileSync(
+        themePath,
+        createTypeScriptContent(themeContent, {
+          exportName: `${brandName}${variation}`,
+          currentBrand: brandName,
+          imports: [
+            { name: 'globalvalue', path: '../globals/globalvalue' },
+            { name: brandName, path: `../brand/${brandName}` },
+            { name: `${brandName}components`, path: `../brand/${brandName}components` }
+          ]
+        })
+      );
     });
   }
 
-  // Process globalvalue
+  // Process global values
   const globalContent = JSON.parse(
     fs.readFileSync(path.join(jsonDir, 'globals', 'globalvalue.json'), 'utf8')
   );
   
-  const processedGlobal = processTokenObject(globalContent);
   const globalOutput = path.join(tsDir, 'globals', 'globalvalue.ts');
-  
   ensureDirectoryExistence(globalOutput);
-  fs.writeFileSync(globalOutput, `// Generated by convert-theme2.js
-export const globalvalue = ${JSON.stringify(processedGlobal, null, 2)
-  .replace(/"([^"]+)":/g, (_, p1) => p1.includes('-') ? `'${p1}':` : `${p1}:`)
-  .replace(/"([^"]+\.[^"]+(?:\["[^"]+"\])*)"/, '$1')};
-`);
+  fs.writeFileSync(
+    globalOutput,
+    createTypeScriptContent(globalContent, {
+      exportName: 'globalvalue'
+    })
+  );
 
   console.log("✨ Conversion complete!");
 }
