@@ -8,8 +8,8 @@ const __dirname = path.dirname(__filename);
 const jsonDir = path.join(__dirname, "json");
 const tsDir = path.join(__dirname, "ts");
 
-// Map to track token definitions and their locations
-const tokenDefinitions = new Map();
+// Map to store all token definitions and their locations
+const tokenDefinitionMap = new Map();
 
 function ensureDirectoryExistence(filePath) {
   const dirname = path.dirname(filePath);
@@ -19,106 +19,61 @@ function ensureDirectoryExistence(filePath) {
 }
 
 /**
- * Builds a map of all token definitions and their locations
+ * Scans all JSON files to build a complete token definition map
  */
-function buildTokenDefinitionMap() {
-  function scanDirectory(dir) {
-    const files = fs.readdirSync(dir, { withFileTypes: true });
+function buildTokenDefinitionMap(dir = jsonDir) {
+  const files = fs.readdirSync(dir, { withFileTypes: true });
+  
+  for (const file of files) {
+    const fullPath = path.join(dir, file.name);
     
-    for (const file of files) {
-      const fullPath = path.join(dir, file.name);
+    if (file.isDirectory()) {
+      buildTokenDefinitionMap(fullPath);
+    } else if (file.name.endsWith('.json')) {
+      const content = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+      const relativePath = path.relative(jsonDir, dir);
+      const moduleName = path.basename(file.name, '.json').replace(/-/g, '_');
       
-      if (file.isDirectory()) {
-        scanDirectory(fullPath);
-      } else if (file.isFile() && file.name.endsWith('.json')) {
-        const content = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
-        const relativePath = path.relative(jsonDir, dir);
-        const moduleName = path.basename(file.name, '.json').replace(/-/g, '_');
-        
-        // Store location info for each top-level token
-        Object.keys(content).forEach(token => {
-          tokenDefinitions.set(token, {
-            path: relativePath,
-            module: moduleName,
-            file: file.name
-          });
-        });
-      }
+      // Store file location and top-level keys
+      const fileInfo = {
+        path: relativePath,
+        module: moduleName,
+        keys: new Set(Object.keys(content))
+      };
+      
+      tokenDefinitionMap.set(fullPath, fileInfo);
     }
   }
-
-  scanDirectory(jsonDir);
 }
 
 /**
- * Finds the source module for a token
+ * Find the source file that defines a token
  */
-function findTokenSource(token) {
-  return tokenDefinitions.get(token);
-}
-
-/**
- * Processes a reference string (e.g. "{brand.primary.300}")
- */
-function processReference(ref, currentPath) {
-  if (!ref.startsWith('{') || !ref.endsWith('}')) return ref;
-  
-  const tokenPath = ref.slice(1, -1);
-  const parts = tokenPath.split('.');
-  const rootToken = parts[0];
-  
-  const tokenInfo = findTokenSource(rootToken);
-  if (!tokenInfo) return ref;
-  
-  // Determine relative import path
-  const importPath = path.relative(
-    path.dirname(currentPath),
-    path.join(tsDir, tokenInfo.path)
-  );
-  
-  // Build the reference string
-  const reference = parts.map(part => {
-    return part.includes('-') ? `['${part}']` : `.${part}`;
-  }).join('');
-  
-  return `${tokenInfo.module}${reference}`;
-}
-
-/**
- * Collects all required imports for a set of references
- */
-function collectImports(references, currentPath) {
-  const imports = new Set();
-  
-  for (const ref of references) {
-    if (!ref.startsWith('{') || !ref.endsWith('}')) continue;
-    
-    const tokenPath = ref.slice(1, -1);
-    const rootToken = tokenPath.split('.')[0];
-    
-    const tokenInfo = findTokenSource(rootToken);
-    if (tokenInfo) {
-      const importPath = path.relative(
-        path.dirname(currentPath),
-        path.join(tsDir, tokenInfo.path)
-      ).replace(/\\/g, '/');
-      
-      imports.add(`import { ${tokenInfo.module} } from '${importPath}/${tokenInfo.module}';`);
+function findTokenDefinition(token) {
+  for (const [filePath, info] of tokenDefinitionMap) {
+    if (info.keys.has(token)) {
+      return {
+        filePath,
+        ...info
+      };
     }
   }
-  
-  return Array.from(imports).sort().join('\n');
+  return null;
 }
 
 /**
- * Finds all token references in an object
+ * Process token references to determine correct imports
  */
-function findReferences(obj) {
+function processTokenReferences(obj) {
   const references = new Set();
   
   JSON.stringify(obj, (key, value) => {
     if (typeof value === 'string' && value.startsWith('{') && value.endsWith('}')) {
-      references.add(value);
+      const token = value.slice(1, -1).split('.')[0];
+      const definition = findTokenDefinition(token);
+      if (definition) {
+        references.add(definition);
+      }
     }
     return value;
   });
@@ -127,72 +82,106 @@ function findReferences(obj) {
 }
 
 /**
- * Converts a JSON object to TypeScript format
+ * Generate import statements for required tokens
  */
-function convertToTypeScript(obj, currentPath) {
-  const references = findReferences(obj);
-  const imports = collectImports(references, currentPath);
+function generateImports(references, currentPath) {
+  const imports = new Set();
   
-  let content = JSON.stringify(obj, null, 2);
+  for (const ref of references) {
+    const relativePath = path.relative(
+      path.dirname(currentPath),
+      path.join(tsDir, ref.path)
+    );
+    
+    const importPath = relativePath.startsWith('.') 
+      ? relativePath 
+      : './' + relativePath;
+      
+    imports.add(`import { ${ref.module} } from '${importPath}/${ref.module}';`);
+  }
   
-  // Process all references
-  references.forEach(ref => {
-    const processed = processReference(ref, currentPath);
-    content = content.replace(new RegExp(escapeRegExp(ref), 'g'), processed);
-  });
-  
-  // Format for TypeScript
-  content = content
-    .replace(/"([^"]+)":/g, (_, key) => {
-      return key.includes('-') ? `'${key}':` : `${key}:`;
-    })
-    .replace(/: "([^"]+)"/g, ": $1")
-    .replace(/"/g, "'");
-  
-  return { imports, content };
-}
-
-function escapeRegExp(string) {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return Array.from(imports).join('\n');
 }
 
 /**
- * Converts a JSON file to TypeScript
+ * Format JSON values for TypeScript with proper references
  */
-function convertFile(jsonPath) {
+function formatJsonForTs(obj) {
+  return JSON.stringify(obj, null, 2)
+    .replace(/"([^"]+)":/g, (match, p1) => 
+      p1.includes('-') ? `'${p1}':` : `${p1}:`)
+    .replace(/"\{([^}]+)\}"/g, (match, p1) => {
+      const parts = p1.split('.');
+      const token = parts[0];
+      const definition = findTokenDefinition(token);
+      
+      if (definition) {
+        const prefix = `${definition.module}.`;
+        if (parts.length === 2) {
+          return `${prefix}${token}['${parts[1]}']`;
+        } else if (parts.length >= 3) {
+          return `${prefix}${token}.${parts[1]}${parts.slice(2).map(p => `['${p}']`).join('')}`;
+        }
+      }
+      
+      return match;
+    })
+    .replace(/"([^"]+)"/g, "'$1'");
+}
+
+/**
+ * Convert a JSON file to TypeScript
+ */
+function convertJsonToTs(jsonPath) {
   const relativePath = path.relative(jsonDir, jsonPath);
   const tsPath = path.join(tsDir, relativePath.replace(/\.json$/, ".ts"));
   const moduleName = path.basename(tsPath, ".ts").replace(/-/g, "_");
 
-  try {
-    const jsonContent = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
-    const { imports, content } = convertToTypeScript(jsonContent, tsPath);
-    
-    const tsContent = `${imports}\n\nexport const ${moduleName} = ${content};\n`;
-    
-    ensureDirectoryExistence(tsPath);
-    fs.writeFileSync(tsPath, tsContent);
-    
-    console.log(`✅ Converted: ${jsonPath} → ${tsPath}`);
-  } catch (error) {
-    console.error(`❌ Error processing ${jsonPath}:`, error);
-  }
+  fs.readFile(jsonPath, "utf8", (err, data) => {
+    if (err) {
+      console.error(`❌ Error reading ${jsonPath}:`, err);
+      return;
+    }
+
+    try {
+      let jsonData = JSON.parse(data);
+      
+      // Find all token references and generate imports
+      const references = processTokenReferences(jsonData);
+      const imports = generateImports(references, tsPath);
+      
+      const formattedJson = formatJsonForTs(jsonData);
+      const tsContent = `${imports}\n\nexport const ${moduleName} = ${formattedJson};`;
+
+      ensureDirectoryExistence(tsPath);
+
+      fs.writeFile(tsPath, tsContent, "utf8", (err) => {
+        if (err) {
+          console.error(`❌ Error writing ${tsPath}:`, err);
+        } else {
+          console.log(`✅ Converted: ${jsonPath} → ${tsPath}`);
+        }
+      });
+    } catch (parseError) {
+      console.error(`❌ Error parsing JSON in ${jsonPath}:`, parseError);
+    }
+  });
 }
 
 /**
- * Converts all JSON files in the directory
+ * Convert all JSON files in directory
  */
 function convertAllFiles(dir = jsonDir) {
   // First build the token definition map
   buildTokenDefinitionMap();
   
-  // Then convert all files
+  // Then convert files
   fs.readdirSync(dir, { withFileTypes: true }).forEach(dirent => {
     const fullPath = path.join(dir, dirent.name);
     if (dirent.isDirectory()) {
       convertAllFiles(fullPath);
     } else if (dirent.isFile() && dirent.name.endsWith(".json")) {
-      convertFile(fullPath);
+      convertJsonToTs(fullPath);
     }
   });
 }
