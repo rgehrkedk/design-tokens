@@ -50,11 +50,18 @@ function buildSymbolDefinitionMap() {
  */
 function findGlobalsTokenSources(obj) {
   const globalTokens = new Map();
+  const globalsDir = path.join(jsonDir, 'globals');
   
+  // Get list of all files in globals directory
+  const globalsFiles = fs.readdirSync(globalsDir)
+    .filter(file => file.endsWith('.json'))
+    .map(file => path.basename(file, '.json'));
+  
+  // Scan through object to find references to any globals
   JSON.stringify(obj, (key, value) => {
     if (typeof value === 'string' && value.startsWith('{') && value.endsWith('}')) {
       const token = value.slice(1, -1).split('.')[0];
-      if (token === 'feedback' || token === 'numbers' || token === 'typography') {
+      if (globalsFiles.includes(token)) {
         globalTokens.set(token, token);
       }
     }
