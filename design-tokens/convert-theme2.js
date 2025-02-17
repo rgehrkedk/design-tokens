@@ -8,8 +8,8 @@ const __dirname = path.dirname(__filename);
 const jsonDir = path.join(__dirname, "json");
 const tsDir = path.join(__dirname, "ts");
 
-// Map to store file definitions and their locations
-const fileDefinitionMap = new Map();
+// Map to store where each token type is defined
+const tokenDefinitionMap = new Map();
 
 function ensureDirectoryExistence(filePath) {
   const dirname = path.dirname(filePath);
@@ -19,32 +19,31 @@ function ensureDirectoryExistence(filePath) {
 }
 
 /**
- * Scans the entire json directory to build a map of where tokens are defined
+ * Scans all JSON files to build a map of token definitions
  */
-function buildFileDefinitionMap(directory = jsonDir) {
+function buildTokenDefinitionMap(directory = jsonDir) {
   const files = fs.readdirSync(directory, { withFileTypes: true });
   
   for (const file of files) {
     const fullPath = path.join(directory, file.name);
     
     if (file.isDirectory()) {
-      buildFileDefinitionMap(fullPath);
+      buildTokenDefinitionMap(fullPath);
     } else if (file.name.endsWith('.json')) {
       const content = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
       const relativePath = path.relative(jsonDir, directory);
       const fileName = path.basename(file.name, '.json').replace(/-/g, '');
       
-      // Store the top-level keys and their file location
+      // Store where each top-level token is defined
       Object.keys(content).forEach(key => {
-        // Skip 'components' in brand files as it's handled separately
+        // Skip components in brand files as it's handled separately
         if (key === 'components' && relativePath === 'brand') return;
         
-        const location = {
+        tokenDefinitionMap.set(key, {
           directory: relativePath,
           fileName,
-          topLevelKey: key
-        };
-        fileDefinitionMap.set(key, location);
+          filePath: fullPath
+        });
       });
     }
   }
@@ -61,64 +60,83 @@ function formatPropertyAccessor(part) {
 }
 
 /**
- * Gets the import name and path for a token based on its location
+ * Gets import information for a token reference
  */
-function getTokenImportInfo(tokenPath) {
+function getTokenImport(tokenPath) {
   const firstPart = tokenPath.split('.')[0];
-  const location = fileDefinitionMap.get(firstPart);
+  const definition = tokenDefinitionMap.get(firstPart);
   
-  if (!location) return null;
+  if (!definition) return null;
   
-  const importName = location.fileName;
-  const importPath = `../${location.directory}/${location.fileName}`;
-  
-  return { importName, importPath };
+  return {
+    importName: definition.fileName,
+    importPath: `../${definition.directory}/${definition.fileName}`
+  };
 }
 
 /**
- * Processes a token reference path into TypeScript
+ * Processes a token reference into TypeScript
  */
 function processTokenReference(reference, options = {}) {
   const { currentBrand } = options;
-  if (!currentBrand) return reference;
+  if (!currentBrand && !reference.startsWith('{')) return reference;
 
   // Remove curly braces and split path
   const tokenPath = reference.slice(1, -1);
   const parts = tokenPath.split('.');
-  
-  // Special handling for feedback references
-  if (parts[0] === 'feedback') {
-    return `globals${parts.map(formatPropertyAccessor).join('')}`;
-  }
 
   // Handle theme references (background, foreground, etc.)
   if (['background', 'foreground', 'components'].includes(parts[0])) {
     return `${currentBrand}light${parts.map(formatPropertyAccessor).join('')}`;
   }
 
-  // Handle brand references (brand, neutrals, etc.)
-  return `${currentBrand}${parts.map(formatPropertyAccessor).join('')}`;
+  // For other references, look up the definition
+  const importInfo = getTokenImport(tokenPath);
+  if (!importInfo) return reference;
+
+  // If it's a brand reference and we have a current brand, use that
+  if (parts[0] === 'brand' && currentBrand) {
+    return `${currentBrand}${parts.map(formatPropertyAccessor).join('')}`;
+  }
+
+  // Otherwise use the looked-up import name
+  return `${importInfo.importName}${parts.map(formatPropertyAccessor).join('')}`;
 }
 
-
 /**
- * Processes a value, handling both direct values and references
+ * Processes a value and collects required imports
  */
 function processValue(value, options = {}) {
+  const imports = new Set();
+  
   if (value && typeof value === 'object' && 'value' in value) {
     if (typeof value.value === 'string' && value.value.startsWith('{')) {
-      return processTokenReference(value.value, options);
+      const importInfo = getTokenImport(value.value.slice(1, -1));
+      if (importInfo) imports.add(JSON.stringify(importInfo));
+      return { 
+        value: processTokenReference(value.value, options),
+        imports
+      };
     }
-    // For direct values, remove redundant quotes
-    return typeof value.value === 'string' ? `'${value.value}'` : value.value;
+    return { 
+      value: typeof value.value === 'string' ? `'${value.value}'` : value.value,
+      imports
+    };
   }
 
   if (typeof value === 'string' && value.startsWith('{')) {
-    return processTokenReference(value, options);
+    const importInfo = getTokenImport(value.slice(1, -1));
+    if (importInfo) imports.add(JSON.stringify(importInfo));
+    return { 
+      value: processTokenReference(value, options),
+      imports
+    };
   }
 
-  // For direct values, remove redundant quotes
-  return typeof value === 'string' ? `'${value}'` : value;
+  return { 
+    value: typeof value === 'string' ? `'${value}'` : value,
+    imports
+  };
 }
 
 /**
@@ -126,39 +144,32 @@ function processValue(value, options = {}) {
  */
 function processTokenObject(obj, options = {}) {
   const result = {};
-  const requiredImports = new Set();
+  const imports = new Set();
 
   for (const [key, value] of Object.entries(obj)) {
     if (value && typeof value === 'object' && !('value' in value)) {
-      const { processed, imports } = processTokenObject(value, options);
-      result[key] = processed;
-      imports.forEach(imp => requiredImports.add(JSON.stringify(imp)));
+      const processed = processTokenObject(value, options);
+      result[key] = processed.result;
+      processed.imports.forEach(imp => imports.add(imp));
     } else {
       const processed = processValue(value, options);
-      result[key] = processed;
-      
-      // If it's a reference, track the required import
-      if (typeof value === 'string' && value.startsWith('{')) {
-        const importInfo = getTokenImportInfo(value.slice(1, -1));
-        if (importInfo) {
-          requiredImports.add(JSON.stringify(importInfo));
-        }
-      }
+      result[key] = processed.value;
+      processed.imports.forEach(imp => imports.add(imp));
     }
   }
 
   return {
-    processed: result,
-    imports: Array.from(requiredImports).map(imp => JSON.parse(imp))
+    result,
+    imports: Array.from(imports).map(imp => JSON.parse(imp))
   };
 }
 
 /**
- * Creates TypeScript content with proper imports and formatting
+ * Creates TypeScript content with proper imports
  */
 function createTypeScriptContent(data, options = {}) {
   const { fileName, additionalImports = [] } = options;
-  const { processed, imports } = processTokenObject(data, options);
+  const { result, imports } = processTokenObject(data, options);
   
   // Combine automatic imports with additional imports
   const allImports = [...imports, ...additionalImports];
@@ -172,7 +183,7 @@ function createTypeScriptContent(data, options = {}) {
     .join('\n');
 
   // Convert to string with proper formatting
-  const content = JSON.stringify(processed, null, 2)
+  const content = JSON.stringify(result, null, 2)
     .replace(/"([^"]+)":/g, (_, p1) => p1.includes('-') ? `'${p1}':` : `${p1}:`)
     .replace(/: "([^"]+)"/g, ": $1") // Remove quotes around values
     .replace(/"([^"]+\.[^"]+(?:\['[^']+'\])*)"(?=,?\n)/g, '$1');
@@ -200,12 +211,7 @@ function processBrandFile(brandFile, directory) {
   ensureDirectoryExistence(basePath);
   fs.writeFileSync(
     basePath,
-    createTypeScriptContent(brandBase, { 
-      fileName: brandName,
-      additionalImports: [
-        { importName: 'globals', importPath: '../globals/globals' }
-      ]
-    })
+    createTypeScriptContent(brandBase, { fileName: brandName })
   );
   
   // Write components file
@@ -235,12 +241,7 @@ function processBrandFile(brandFile, directory) {
         themePath,
         createTypeScriptContent(themeContent, {
           fileName: `${brandName}${variation}`,
-          currentBrand: brandName,
-          additionalImports: [
-            { importName: 'globalvalue', importPath: '../globals/globalvalue' },
-            { importName: brandName, importPath: `../brand/${brandName}` },
-            { importName: `${brandName}components`, importPath: `../brand/${brandName}components` }
-          ]
+          currentBrand: brandName
         })
       );
     }
@@ -253,9 +254,9 @@ function processBrandFile(brandFile, directory) {
 function convertFiles() {
   console.log("🔍 Starting conversion process...");
   
-  // First build the definition map
-  console.log("📚 Building file definition map...");
-  buildFileDefinitionMap();
+  // First build the token definition map
+  console.log("📚 Building token definition map...");
+  buildTokenDefinitionMap();
   
   // Process brand files first
   const brandDir = path.join(jsonDir, 'brand');
@@ -287,10 +288,7 @@ function convertFiles() {
         
         const content = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
         const tsContent = createTypeScriptContent(content, { 
-          fileName: path.basename(file.name, '.json'),
-          additionalImports: [
-            { importName: 'globalvalue', importPath: '../globals/globalvalue' }
-          ]
+          fileName: path.basename(file.name, '.json')
         });
         
         ensureDirectoryExistence(tsPath);
