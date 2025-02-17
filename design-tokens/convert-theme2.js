@@ -10,6 +10,8 @@ const tsDir = path.join(__dirname, "ts");
 
 // Map to store all token definitions and their locations
 const tokenDefinitionMap = new Map();
+// Store list of discovered brands
+const brandsList = new Set();
 
 function ensureDirectoryExistence(filePath) {
   const dirname = path.dirname(filePath);
@@ -19,23 +21,28 @@ function ensureDirectoryExistence(filePath) {
 }
 
 /**
- * Scans all JSON files to build a complete token definition map
+ * Scans all JSON files to build a complete token definition map and discover brands
  */
 function buildTokenDefinitionMap(dir = jsonDir) {
   const files = fs.readdirSync(dir, { withFileTypes: true });
   
   for (const file of files) {
     const fullPath = path.join(dir, file.name);
+    const relativePath = path.relative(jsonDir, dir);
     
     if (file.isDirectory()) {
       buildTokenDefinitionMap(fullPath);
     } else if (file.name.endsWith('.json')) {
+      // Store brand names if found in brand directory
+      if (relativePath === 'brand') {
+        const brandName = path.basename(file.name, '.json');
+        brandsList.add(brandName);
+      }
+
       const content = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
-      const relativePath = path.relative(jsonDir, dir);
       const moduleName = path.basename(file.name, '.json').replace(/-/g, '_');
       
       // Store file location and top-level keys
-      // For brand files, exclude 'components' from keys
       const keys = new Set(
         Object.keys(content).filter(key => 
           !(relativePath === 'brand' && key === 'components')
@@ -46,7 +53,8 @@ function buildTokenDefinitionMap(dir = jsonDir) {
         path: relativePath,
         module: moduleName,
         keys,
-        isGlobal: relativePath.startsWith('globals')
+        isGlobal: relativePath.startsWith('globals'),
+        isTheme: relativePath === 'theme'
       };
       
       tokenDefinitionMap.set(fullPath, fileInfo);
@@ -72,14 +80,14 @@ function findTokenDefinition(token) {
 /**
  * Process token references to determine correct imports
  */
-function processTokenReferences(obj) {
+function processTokenReferences(obj, excludeTheme = false) {
   const references = new Set();
   
   JSON.stringify(obj, (key, value) => {
     if (typeof value === 'string' && value.startsWith('{') && value.endsWith('}')) {
       const token = value.slice(1, -1).split('.')[0];
       const definition = findTokenDefinition(token);
-      if (definition) {
+      if (definition && (!excludeTheme || !definition.isTheme)) {
         references.add(definition);
       }
     }
@@ -105,8 +113,7 @@ function generateImports(references, currentPath) {
       ? relativePath 
       : './' + relativePath;
       
-    // For globals, use the actual filename as the import name
-    const importName = ref.isGlobal ? ref.module : ref.module;
+    const importName = ref.module;
     imports.add(`import { ${importName} } from '${importPath}/${ref.module}';`);
   }
   
@@ -126,8 +133,7 @@ function formatJsonForTs(obj) {
       const definition = findTokenDefinition(token);
       
       if (definition) {
-        // Use the appropriate module name based on whether it's a global
-        const prefix = definition.isGlobal ? `${definition.module}.` : `${definition.module}.`;
+        const prefix = `${definition.module}.`;
         if (parts.length === 2) {
           return `${prefix}${token}['${parts[1]}']`;
         } else if (parts.length >= 3) {
@@ -141,10 +147,56 @@ function formatJsonForTs(obj) {
 }
 
 /**
+ * Convert theme files for each brand
+ */
+function convertThemeFiles() {
+  const themeDir = path.join(jsonDir, 'theme');
+  if (!fs.existsSync(themeDir)) return;
+
+  const themeFiles = fs.readdirSync(themeDir)
+    .filter(f => f.endsWith('.json'));
+
+  // Process each theme file for each brand
+  for (const themeFile of themeFiles) {
+    const themeName = path.basename(themeFile, '.json'); // 'dark' or 'light'
+    const themeContent = JSON.parse(
+      fs.readFileSync(path.join(themeDir, themeFile), 'utf8')
+    );
+
+    // Generate theme file for each brand
+    for (const brand of brandsList) {
+      const tsPath = path.join(tsDir, 'theme', `${brand}_${themeName}.ts`);
+      
+      // Process references excluding theme files to prevent circular imports
+      const references = processTokenReferences(themeContent, true);
+      const imports = generateImports(references, tsPath);
+      
+      const formattedJson = formatJsonForTs(themeContent);
+      const moduleName = `${brand}_${themeName}`;
+      
+      const tsContent = `${imports}\n\nexport const ${moduleName} = ${formattedJson};`;
+
+      ensureDirectoryExistence(tsPath);
+      fs.writeFile(tsPath, tsContent, "utf8", (err) => {
+        if (err) {
+          console.error(`❌ Error writing ${tsPath}:`, err);
+        } else {
+          console.log(`✅ Converted theme: ${tsPath}`);
+        }
+      });
+    }
+  }
+}
+
+/**
  * Convert a JSON file to TypeScript
  */
 function convertJsonToTs(jsonPath) {
   const relativePath = path.relative(jsonDir, jsonPath);
+  
+  // Skip theme directory as it's handled separately
+  if (relativePath.startsWith('theme')) return;
+  
   const tsPath = path.join(tsDir, relativePath.replace(/\.json$/, ".ts"));
   const moduleName = path.basename(tsPath, ".ts").replace(/-/g, "_");
 
@@ -208,10 +260,10 @@ function convertJsonToTs(jsonPath) {
  * Convert all JSON files in directory
  */
 function convertAllFiles(dir = jsonDir) {
-  // First build the token definition map
+  // First build the token definition map and discover brands
   buildTokenDefinitionMap();
   
-  // Then convert files
+  // Convert regular files
   fs.readdirSync(dir, { withFileTypes: true }).forEach(dirent => {
     const fullPath = path.join(dir, dirent.name);
     if (dirent.isDirectory()) {
@@ -220,6 +272,9 @@ function convertAllFiles(dir = jsonDir) {
       convertJsonToTs(fullPath);
     }
   });
+  
+  // Convert theme files after all other files
+  convertThemeFiles();
 }
 
 // Start conversion
