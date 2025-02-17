@@ -8,8 +8,8 @@ const __dirname = path.dirname(__filename);
 const jsonDir = path.join(__dirname, "json");
 const tsDir = path.join(__dirname, "ts");
 
-// Map to store where each token type is defined
-const tokenDefinitionMap = new Map();
+// Map to store file definitions and their locations
+const fileDefinitionMap = new Map();
 
 function ensureDirectoryExistence(filePath) {
   const dirname = path.dirname(filePath);
@@ -19,31 +19,32 @@ function ensureDirectoryExistence(filePath) {
 }
 
 /**
- * Scans all JSON files to build a map of token definitions
+ * Scans the entire json directory to build a map of where tokens are defined
  */
-function buildTokenDefinitionMap(directory = jsonDir) {
+function buildFileDefinitionMap(directory = jsonDir) {
   const files = fs.readdirSync(directory, { withFileTypes: true });
   
   for (const file of files) {
     const fullPath = path.join(directory, file.name);
     
     if (file.isDirectory()) {
-      buildTokenDefinitionMap(fullPath);
+      buildFileDefinitionMap(fullPath);
     } else if (file.name.endsWith('.json')) {
       const content = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
       const relativePath = path.relative(jsonDir, directory);
       const fileName = path.basename(file.name, '.json').replace(/-/g, '');
       
-      // Store where each top-level token is defined
+      // Store the top-level keys and their file location
       Object.keys(content).forEach(key => {
-        // Skip components in brand files as it's handled separately
+        // Skip 'components' in brand files as it's handled separately
         if (key === 'components' && relativePath === 'brand') return;
         
-        tokenDefinitionMap.set(key, {
+        const location = {
           directory: relativePath,
           fileName,
-          filePath: fullPath
-        });
+          topLevelKey: key
+        };
+        fileDefinitionMap.set(key, location);
       });
     }
   }
@@ -60,83 +61,70 @@ function formatPropertyAccessor(part) {
 }
 
 /**
- * Gets import information for a token reference
+ * Gets the import name and path for a token based on its location
  */
-function getTokenImport(tokenPath) {
+function getTokenImportInfo(tokenPath) {
   const firstPart = tokenPath.split('.')[0];
-  const definition = tokenDefinitionMap.get(firstPart);
+  const location = fileDefinitionMap.get(firstPart);
   
-  if (!definition) return null;
+  if (!location) return null;
   
-  return {
-    importName: definition.fileName,
-    importPath: `../${definition.directory}/${definition.fileName}`
-  };
+  const importName = location.fileName;
+  const importPath = `../${location.directory}/${location.fileName}`;
+  
+  return { importName, importPath };
 }
 
 /**
- * Processes a token reference into TypeScript
+ * Processes a token reference path into TypeScript
+ */
+/**
+ * Processes a token reference path into TypeScript
  */
 function processTokenReference(reference, options = {}) {
   const { currentBrand } = options;
-  if (!currentBrand && !reference.startsWith('{')) return reference;
+  if (!currentBrand) return reference;
 
   // Remove curly braces and split path
   const tokenPath = reference.slice(1, -1);
   const parts = tokenPath.split('.');
-
-  // Handle theme references (background, foreground, etc.)
-  if (['background', 'foreground', 'components'].includes(parts[0])) {
+  
+  // Look up the defining file for this token
+  const firstPart = parts[0];
+  const location = fileDefinitionMap.get(firstPart);
+  
+  if (!location) return reference;
+  
+  if (location.directory === 'globals') {
+    // Token is defined in a globals file
+    return `${location.fileName}${parts.map(formatPropertyAccessor).join('')}`;
+  } else if (['background', 'foreground', 'components'].includes(firstPart)) {
+    // Theme references
     return `${currentBrand}light${parts.map(formatPropertyAccessor).join('')}`;
-  }
-
-  // For other references, look up the definition
-  const importInfo = getTokenImport(tokenPath);
-  if (!importInfo) return reference;
-
-  // If it's a brand reference and we have a current brand, use that
-  if (parts[0] === 'brand' && currentBrand) {
+  } else {
+    // Brand references
     return `${currentBrand}${parts.map(formatPropertyAccessor).join('')}`;
   }
-
-  // Otherwise use the looked-up import name
-  return `${importInfo.importName}${parts.map(formatPropertyAccessor).join('')}`;
 }
 
 /**
- * Processes a value and collects required imports
+ * Processes a value, handling both direct values and references
  */
 function processValue(value, options = {}) {
-  const imports = new Set();
-  
   if (value && typeof value === 'object' && 'value' in value) {
     if (typeof value.value === 'string' && value.value.startsWith('{')) {
-      const importInfo = getTokenImport(value.value.slice(1, -1));
-      if (importInfo) imports.add(JSON.stringify(importInfo));
-      return { 
-        value: processTokenReference(value.value, options),
-        imports
-      };
+      return processTokenReference(value.value, options);
     }
-    return { 
-      value: typeof value.value === 'string' ? `'${value.value}'` : value.value,
-      imports
-    };
+    // For direct values, remove redundant quotes
+    return typeof value.value === 'string' ? `'${value.value}'` : value.value;
   }
 
   if (typeof value === 'string' && value.startsWith('{')) {
-    const importInfo = getTokenImport(value.slice(1, -1));
-    if (importInfo) imports.add(JSON.stringify(importInfo));
-    return { 
-      value: processTokenReference(value, options),
-      imports
-    };
+    return processTokenReference(value, options);
   }
 
-  return { 
-    value: typeof value === 'string' ? `'${value}'` : value,
-    imports
-  };
+  // For direct values, remove redundant quotes
+  return typeof value === 'string' ? `'${value}'` : value;
 }
 
 /**
@@ -144,32 +132,39 @@ function processValue(value, options = {}) {
  */
 function processTokenObject(obj, options = {}) {
   const result = {};
-  const imports = new Set();
+  const requiredImports = new Set();
 
   for (const [key, value] of Object.entries(obj)) {
     if (value && typeof value === 'object' && !('value' in value)) {
-      const processed = processTokenObject(value, options);
-      result[key] = processed.result;
-      processed.imports.forEach(imp => imports.add(imp));
+      const { processed, imports } = processTokenObject(value, options);
+      result[key] = processed;
+      imports.forEach(imp => requiredImports.add(JSON.stringify(imp)));
     } else {
       const processed = processValue(value, options);
-      result[key] = processed.value;
-      processed.imports.forEach(imp => imports.add(imp));
+      result[key] = processed;
+      
+      // If it's a reference, track the required import
+      if (typeof value === 'string' && value.startsWith('{')) {
+        const importInfo = getTokenImportInfo(value.slice(1, -1));
+        if (importInfo) {
+          requiredImports.add(JSON.stringify(importInfo));
+        }
+      }
     }
   }
 
   return {
-    result,
-    imports: Array.from(imports).map(imp => JSON.parse(imp))
+    processed: result,
+    imports: Array.from(requiredImports).map(imp => JSON.parse(imp))
   };
 }
 
 /**
- * Creates TypeScript content with proper imports
+ * Creates TypeScript content with proper imports and formatting
  */
 function createTypeScriptContent(data, options = {}) {
   const { fileName, additionalImports = [] } = options;
-  const { result, imports } = processTokenObject(data, options);
+  const { processed, imports } = processTokenObject(data, options);
   
   // Combine automatic imports with additional imports
   const allImports = [...imports, ...additionalImports];
@@ -183,7 +178,7 @@ function createTypeScriptContent(data, options = {}) {
     .join('\n');
 
   // Convert to string with proper formatting
-  const content = JSON.stringify(result, null, 2)
+  const content = JSON.stringify(processed, null, 2)
     .replace(/"([^"]+)":/g, (_, p1) => p1.includes('-') ? `'${p1}':` : `${p1}:`)
     .replace(/: "([^"]+)"/g, ": $1") // Remove quotes around values
     .replace(/"([^"]+\.[^"]+(?:\['[^']+'\])*)"(?=,?\n)/g, '$1');
@@ -211,7 +206,12 @@ function processBrandFile(brandFile, directory) {
   ensureDirectoryExistence(basePath);
   fs.writeFileSync(
     basePath,
-    createTypeScriptContent(brandBase, { fileName: brandName })
+    createTypeScriptContent(brandBase, { 
+      fileName: brandName,
+      additionalImports: [
+        { importName: 'globals', importPath: '../globals/globals' }
+      ]
+    })
   );
   
   // Write components file
@@ -241,7 +241,12 @@ function processBrandFile(brandFile, directory) {
         themePath,
         createTypeScriptContent(themeContent, {
           fileName: `${brandName}${variation}`,
-          currentBrand: brandName
+          currentBrand: brandName,
+          additionalImports: [
+            { importName: 'globalvalue', importPath: '../globals/globalvalue' },
+            { importName: brandName, importPath: `../brand/${brandName}` },
+            { importName: `${brandName}components`, importPath: `../brand/${brandName}components` }
+          ]
         })
       );
     }
@@ -254,9 +259,9 @@ function processBrandFile(brandFile, directory) {
 function convertFiles() {
   console.log("🔍 Starting conversion process...");
   
-  // First build the token definition map
-  console.log("📚 Building token definition map...");
-  buildTokenDefinitionMap();
+  // First build the definition map
+  console.log("📚 Building file definition map...");
+  buildFileDefinitionMap();
   
   // Process brand files first
   const brandDir = path.join(jsonDir, 'brand');
@@ -288,7 +293,10 @@ function convertFiles() {
         
         const content = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
         const tsContent = createTypeScriptContent(content, { 
-          fileName: path.basename(file.name, '.json')
+          fileName: path.basename(file.name, '.json'),
+          additionalImports: [
+            { importName: 'globalvalue', importPath: '../globals/globalvalue' }
+          ]
         });
         
         ensureDirectoryExistence(tsPath);
