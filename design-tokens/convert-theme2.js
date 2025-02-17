@@ -106,7 +106,6 @@ function processTokenReference(reference, options = {}) {
     return `${currentBrand}${parts.map(formatPropertyAccessor).join('')}`;
   }
 }
-}
 
 /**
  * Processes a value, handling both direct values and references
