@@ -35,10 +35,18 @@ function buildTokenDefinitionMap(dir = jsonDir) {
       const moduleName = path.basename(file.name, '.json').replace(/-/g, '_');
       
       // Store file location and top-level keys
+      // For brand files, exclude 'components' from keys
+      const keys = new Set(
+        Object.keys(content).filter(key => 
+          !(relativePath === 'brand' && key === 'components')
+        )
+      );
+      
       const fileInfo = {
         path: relativePath,
         module: moduleName,
-        keys: new Set(Object.keys(content))
+        keys,
+        isGlobal: relativePath.startsWith('globals')
       };
       
       tokenDefinitionMap.set(fullPath, fileInfo);
@@ -97,7 +105,9 @@ function generateImports(references, currentPath) {
       ? relativePath 
       : './' + relativePath;
       
-    imports.add(`import { ${ref.module} } from '${importPath}/${ref.module}';`);
+    // For globals, use the actual filename as the import name
+    const importName = ref.isGlobal ? ref.module : ref.module;
+    imports.add(`import { ${importName} } from '${importPath}/${ref.module}';`);
   }
   
   return Array.from(imports).join('\n');
@@ -116,7 +126,8 @@ function formatJsonForTs(obj) {
       const definition = findTokenDefinition(token);
       
       if (definition) {
-        const prefix = `${definition.module}.`;
+        // Use the appropriate module name based on whether it's a global
+        const prefix = definition.isGlobal ? `${definition.module}.` : `${definition.module}.`;
         if (parts.length === 2) {
           return `${prefix}${token}['${parts[1]}']`;
         } else if (parts.length >= 3) {
@@ -145,6 +156,31 @@ function convertJsonToTs(jsonPath) {
 
     try {
       let jsonData = JSON.parse(data);
+      
+      // For brand files, extract components
+      if (relativePath.startsWith('brand')) {
+        const { components, ...brandData } = jsonData;
+        jsonData = brandData;
+        
+        // If there are components, create a separate file for them
+        if (components) {
+          const componentsPath = tsPath.replace('.ts', 'components.ts');
+          const componentReferences = processTokenReferences(components);
+          const componentImports = generateImports(componentReferences, componentsPath);
+          const formattedComponents = formatJsonForTs(components);
+          
+          const componentsContent = `${componentImports}\n\nexport const ${moduleName}_components = ${formattedComponents};`;
+          
+          ensureDirectoryExistence(componentsPath);
+          fs.writeFile(componentsPath, componentsContent, "utf8", (err) => {
+            if (err) {
+              console.error(`❌ Error writing ${componentsPath}:`, err);
+            } else {
+              console.log(`✅ Converted components: ${componentsPath}`);
+            }
+          });
+        }
+      }
       
       // Find all token references and generate imports
       const references = processTokenReferences(jsonData);
