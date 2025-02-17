@@ -80,6 +80,8 @@ function getTokenImportInfo(tokenPath) {
  */
 function processTokenReference(reference, options = {}) {
   const { currentBrand } = options;
+  if (!currentBrand) return reference;
+
   // Remove curly braces and split path
   const tokenPath = reference.slice(1, -1);
   const parts = tokenPath.split('.');
@@ -89,18 +91,13 @@ function processTokenReference(reference, options = {}) {
     return `globalvalue${parts.map(formatPropertyAccessor).join('')}`;
   }
 
-  // Special handling for brand references in components
-  if (parts[0] === 'brand' && currentBrand) {
-    return `${currentBrand}${parts.map(formatPropertyAccessor).join('')}`;
+  // Handle theme references (background, foreground, etc.)
+  if (['background', 'foreground', 'components'].includes(parts[0])) {
+    return `${currentBrand}light${parts.map(formatPropertyAccessor).join('')}`;
   }
-  
-  // Get import info for this token
-  const importInfo = getTokenImportInfo(tokenPath);
-  if (!importInfo) return reference; // Keep original if not found
-  
-  // Build the reference using the import name
-  const accessors = parts.map(formatPropertyAccessor).join('');
-  return `${importInfo.importName}${accessors}`;
+
+  // Handle brand references (brand, neutrals, etc.)
+  return `${currentBrand}${parts.map(formatPropertyAccessor).join('')}`;
 }
 
 /**
