@@ -79,6 +79,7 @@ function getTokenImportInfo(tokenPath) {
  * Processes a token reference path into TypeScript
  */
 function processTokenReference(reference, options = {}) {
+  const { currentBrand } = options;
   // Remove curly braces and split path
   const tokenPath = reference.slice(1, -1);
   const parts = tokenPath.split('.');
@@ -86,6 +87,11 @@ function processTokenReference(reference, options = {}) {
   // Special handling for feedback references
   if (parts[0] === 'feedback') {
     return `globalvalue${parts.map(formatPropertyAccessor).join('')}`;
+  }
+
+  // Special handling for brand references in components
+  if (parts[0] === 'brand' && currentBrand) {
+    return `${currentBrand}${parts.map(formatPropertyAccessor).join('')}`;
   }
   
   // Get import info for this token
@@ -196,7 +202,12 @@ function processBrandFile(brandFile, directory) {
   ensureDirectoryExistence(basePath);
   fs.writeFileSync(
     basePath,
-    createTypeScriptContent(brandBase, { fileName: brandName })
+    createTypeScriptContent(brandBase, { 
+      fileName: brandName,
+      additionalImports: [
+        { importName: 'globalvalue', importPath: '../globals/globalvalue' }
+      ]
+    })
   );
   
   // Write components file
@@ -205,6 +216,7 @@ function processBrandFile(brandFile, directory) {
     componentsPath,
     createTypeScriptContent(components, {
       fileName: `${brandName}components`,
+      currentBrand: brandName,
       additionalImports: [
         { importName: brandName, importPath: `../brand/${brandName}` },
         { importName: `${brandName}light`, importPath: `../theme/${brandName}light` },
@@ -212,6 +224,29 @@ function processBrandFile(brandFile, directory) {
       ]
     })
   );
+
+  // Process theme variations
+  ['light', 'dark'].forEach(variation => {
+    const themeFile = path.join(jsonDir, 'theme', `${variation}.json`);
+    if (fs.existsSync(themeFile)) {
+      const themeContent = JSON.parse(fs.readFileSync(themeFile, 'utf8'));
+      const themePath = path.join(tsDir, 'theme', `${brandName}${variation}.ts`);
+      
+      ensureDirectoryExistence(themePath);
+      fs.writeFileSync(
+        themePath,
+        createTypeScriptContent(themeContent, {
+          fileName: `${brandName}${variation}`,
+          currentBrand: brandName,
+          additionalImports: [
+            { importName: 'globalvalue', importPath: '../globals/globalvalue' },
+            { importName: brandName, importPath: `../brand/${brandName}` },
+            { importName: `${brandName}components`, importPath: `../brand/${brandName}components` }
+          ]
+        })
+      );
+    }
+  });
 }
 
 /**
