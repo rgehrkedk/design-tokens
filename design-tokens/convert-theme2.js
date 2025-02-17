@@ -8,11 +8,44 @@ const __dirname = path.dirname(__filename);
 const jsonDir = path.join(__dirname, "json");
 const tsDir = path.join(__dirname, "ts");
 
+// Track what properties each brand defines
+const brandDefinitions = new Map();
+
 function ensureDirectoryExistence(filePath) {
   const dirname = path.dirname(filePath);
   if (!fs.existsSync(dirname)) {
     fs.mkdirSync(dirname, { recursive: true });
   }
+}
+
+/**
+ * Scans brand files to determine what properties they define
+ */
+function scanBrandDefinitions() {
+  const brandFiles = fs.readdirSync(path.join(jsonDir, 'brand'))
+    .filter(f => f.endsWith('.json'));
+
+  for (const brandFile of brandFiles) {
+    const brandName = path.basename(brandFile, '.json').replace(/-/g, '');
+    const content = JSON.parse(
+      fs.readFileSync(path.join(jsonDir, 'brand', brandFile), 'utf8')
+    );
+
+    // Store top-level keys for each brand
+    brandDefinitions.set(brandName, new Set(Object.keys(content)));
+  }
+}
+
+/**
+ * Determines if a property path is defined in a brand
+ */
+function isDefinedInBrand(brandName, propertyPath) {
+  const brandProps = brandDefinitions.get(brandName);
+  if (!brandProps) return false;
+
+  // Check the first segment of the path
+  const topLevel = propertyPath.split('.')[0];
+  return brandProps.has(topLevel);
 }
 
 /**
@@ -26,31 +59,69 @@ function parseReference(value) {
 }
 
 /**
- * Converts a value object into a direct reference
+ * Determines the correct source for a reference
+ */
+function determineReferenceSource(reference, options) {
+  const { currentBrand = '' } = options;
+  const [firstPart, ...rest] = reference;
+
+  // Special cases for self-references within the theme
+  if (['background', 'foreground', 'components'].includes(firstPart)) {
+    return { source: 'self', path: reference };
+  }
+
+  // Handle brand-specific references
+  if (firstPart === 'brand') {
+    return {
+      source: 'brand',
+      path: [`${currentBrand}`, 'brand', ...rest]
+    };
+  }
+
+  // Check if the property exists in the brand
+  const fullPath = reference.join('.');
+  if (isDefinedInBrand(currentBrand, firstPart)) {
+    return {
+      source: 'brand',
+      path: [currentBrand, ...reference]
+    };
+  }
+
+  // Default to globalvalue for other references
+  return {
+    source: 'globalvalue',
+    path: reference
+  };
+}
+
+/**
+ * Converts a reference path to a TypeScript accessor
+ */
+function createAccessorPath(parts) {
+  return parts
+    .map(part => {
+      if (/^[0-9]/.test(part) || part.includes('-') || part.includes(' ')) {
+        return `["${part}"]`;
+      }
+      return `.${part}`;
+    })
+    .join('')
+    .replace(/^\./, ''); // Remove leading dot
+}
+
+/**
+ * Processes a value and its references
  */
 function processValue(value, options = {}) {
-  const { currentBrand = '', parentKeys = [] } = options;
-
-  // If it's a value object, process its value property
   if (value && typeof value === 'object' && 'value' in value) {
     const reference = parseReference(value.value);
     if (reference) {
-      // Handle different types of references
-      if (reference[0] === 'brand') {
-        reference[0] = currentBrand;
-        return reference.join('.');
-      } else if (reference[0] === 'background' || reference[0] === 'foreground' || reference[0] === 'components') {
-        // These are self-references within the theme
-        return reference.join('.');
-      } else {
-        // These are typically globalvalue references
-        return `globalvalue.${reference.join('.')}`;
-      }
+      const { source, path } = determineReferenceSource(reference, options);
+      return createAccessorPath(path);
     }
-    return value.value; // If it's not a reference, return the raw value
+    return value.value;
   }
 
-  // If it's a direct string reference
   if (typeof value === 'string' && value.startsWith('{')) {
     return processValue({ value }, options);
   }
@@ -89,7 +160,7 @@ import { ${brandName}components } from '../brand/${brandName}components';
 
 export const ${brandName}${variation} = ${JSON.stringify(processed, null, 2)
     .replace(/"([^"]+)":/g, (_, p1) => p1.includes('-') ? `'${p1}':` : `${p1}:`)
-    .replace(/"([^"]+)\.([^"]+)"/g, '$1.$2')};
+    .replace(/"([^"]+)\.([^"]+\.?[^"]*?)"/g, '$1.$2')};
 `;
 }
 
@@ -98,6 +169,10 @@ export const ${brandName}${variation} = ${JSON.stringify(processed, null, 2)
  */
 function convertFiles() {
   console.log("🔍 Starting conversion process...");
+
+  // First scan brand definitions
+  console.log("📚 Scanning brand definitions...");
+  scanBrandDefinitions();
 
   // Process each brand
   const brandFiles = fs.readdirSync(path.join(jsonDir, 'brand'))
@@ -116,20 +191,22 @@ function convertFiles() {
     const { components, ...brandBase } = brandContent;
 
     // Process base brand file
-    const processedBase = processTokenObject(brandBase);
+    const processedBase = processTokenObject(brandBase, { currentBrand: brandName });
     const baseContent = `// Generated by convert-theme2.js
 export const ${brandName} = ${JSON.stringify(processedBase, null, 2)
-  .replace(/"([^"]+)":/g, (_, p1) => p1.includes('-') ? `'${p1}':` : `${p1}:`)};
+  .replace(/"([^"]+)":/g, (_, p1) => p1.includes('-') ? `'${p1}':` : `${p1}:`)
+  .replace(/"([^"]+)\.([^"]+\.?[^"]*?)"/g, '$1.$2')};
 `;
 
     // Process components file
-    const processedComponents = processTokenObject(components);
+    const processedComponents = processTokenObject(components, { currentBrand: brandName });
     const componentsContent = `// Generated by convert-theme2.js
 import { ${brandName}light } from '../theme/${brandName}light';
 import { ${brandName}dark } from '../theme/${brandName}dark';
 
 export const ${brandName}components = ${JSON.stringify(processedComponents, null, 2)
-  .replace(/"([^"]+)":/g, (_, p1) => p1.includes('-') ? `'${p1}':` : `${p1}:`)};
+  .replace(/"([^"]+)":/g, (_, p1) => p1.includes('-') ? `'${p1}':` : `${p1}:`)
+  .replace(/"([^"]+)\.([^"]+\.?[^"]*?)"/g, '$1.$2')};
 `;
 
     // Write brand files
@@ -168,7 +245,8 @@ export const ${brandName}components = ${JSON.stringify(processedComponents, null
   ensureDirectoryExistence(globalOutput);
   fs.writeFileSync(globalOutput, `// Generated by convert-theme2.js
 export const globalvalue = ${JSON.stringify(processedGlobal, null, 2)
-  .replace(/"([^"]+)":/g, (_, p1) => p1.includes('-') ? `'${p1}':` : `${p1}:`)};
+  .replace(/"([^"]+)":/g, (_, p1) => p1.includes('-') ? `'${p1}':` : `${p1}:`)
+  .replace(/"([^"]+)\.([^"]+\.?[^"]*?)"/g, '$1.$2')};
 `);
 
   console.log("✨ Conversion complete!");
