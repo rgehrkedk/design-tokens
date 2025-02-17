@@ -85,17 +85,9 @@ function processTokenReference(reference, options = {}) {
   }
 
   // Build the full reference
-  // Handle property path based on the type of reference
-  let propertyPath;
-  if (firstPart === 'brand') {
-    propertyPath = rest;
-  } else if (firstPart === 'feedback') {
-    propertyPath = parts;
-  } else {
-    propertyPath = parts;
-  }
-
+  const propertyPath = firstPart === 'brand' ? rest : parts;
   const accessors = propertyPath.map(formatPropertyAccessor).join('');
+  
   return `${baseReference}${accessors}`;
 }
 
