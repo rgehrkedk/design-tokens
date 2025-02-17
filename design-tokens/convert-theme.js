@@ -158,9 +158,13 @@ class FileProcessor {
       const componentImports = TokenProcessor.generateImports(componentRefs, componentsPath);
       const formattedComponents = TokenProcessor.formatJson(components);
       
+      // Add brand-specific theme imports
+      const themeImports = `import { ${moduleName}_light } from '../theme/${moduleName}_light';\nimport { ${moduleName}_dark } from '../theme/${moduleName}_dark';`;
+      const combinedImports = componentImports ? `${themeImports}\n${componentImports}` : themeImports;
+      
       await utils.writeFile(
         componentsPath,
-        utils.formatTsContent(componentImports, `${moduleName}_components`, formattedComponents)
+        utils.formatTsContent(combinedImports, `${moduleName}_components`, formattedComponents)
       );
     }
   }
