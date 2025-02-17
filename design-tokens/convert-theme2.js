@@ -88,7 +88,7 @@ function processTokenReference(reference, options = {}) {
   
   // Special handling for feedback references
   if (parts[0] === 'feedback') {
-    return `globalvalue${parts.map(formatPropertyAccessor).join('')}`;
+    return `globals${parts.map(formatPropertyAccessor).join('')}`;
   }
 
   // Handle theme references (background, foreground, etc.)
@@ -202,7 +202,7 @@ function processBrandFile(brandFile, directory) {
     createTypeScriptContent(brandBase, { 
       fileName: brandName,
       additionalImports: [
-        { importName: 'globalvalue', importPath: '../globals/globalvalue' }
+        { importName: 'globals', importPath: '../globals/globals' }
       ]
     })
   );
@@ -236,7 +236,7 @@ function processBrandFile(brandFile, directory) {
           fileName: `${brandName}${variation}`,
           currentBrand: brandName,
           additionalImports: [
-            { importName: 'globalvalue', importPath: '../globals/globalvalue' },
+            { importName: 'globals', importPath: '../globals/globals' },
             { importName: brandName, importPath: `../brand/${brandName}` },
             { importName: `${brandName}components`, importPath: `../brand/${brandName}components` }
           ]
