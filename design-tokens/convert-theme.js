@@ -5,21 +5,12 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Configuration - can be modified for different projects
-const CONFIG = {
-  sourceDir: "json",  // Source directory for JSON files
-  outputDir: "ts",    // Output directory for TypeScript files
-  fileExtension: {
-    source: ".json",
-    output: ".ts"
-  }
-};
-
-const jsonDir = path.join(__dirname, CONFIG.sourceDir);
-const tsDir = path.join(__dirname, CONFIG.outputDir);
+const jsonDir = path.join(__dirname, "json");
+const tsDir = path.join(__dirname, "ts");
 
 // Cache for storing symbol definitions and their full paths
 const symbolDefinitionCache = new Map();
+const dependencyGraph = new Map();
 
 function ensureDirectoryExistence(filePath) {
   const dirname = path.dirname(filePath);
@@ -40,31 +31,22 @@ function buildSymbolDefinitionMap() {
       
       if (file.isDirectory()) {
         scanDirectory(fullPath);
-      } else if (file.isFile() && file.name.endsWith(CONFIG.fileExtension.source)) {
-        try {
-          const content = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
-          const relativePath = path.relative(jsonDir, dir);
-          const moduleBaseName = path.basename(file.name, CONFIG.fileExtension.source);
-          
-          // Store full path information for the module
-          const moduleInfo = {
-            folder: relativePath,
-            name: moduleBaseName,
-            fullPath: path.join(relativePath, moduleBaseName),
-            symbols: extractTopLevelSymbols(content)
-          };
-          
-          // Cache each top-level symbol with its module info
-          for (const symbol of moduleInfo.symbols) {
-            if (symbolDefinitionCache.has(symbol)) {
-              console.warn(`⚠️ Warning: Symbol '${symbol}' is defined in multiple files:`,
-                `\n  - ${symbolDefinitionCache.get(symbol).fullPath}`,
-                `\n  - ${moduleInfo.fullPath}`);
-            }
-            symbolDefinitionCache.set(symbol, moduleInfo);
-          }
-        } catch (error) {
-          console.error(`❌ Error processing ${fullPath}:`, error);
+      } else if (file.isFile() && file.name.endsWith('.json')) {
+        const content = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+        const relativePath = path.relative(jsonDir, dir);
+        const moduleBaseName = path.basename(file.name, '.json');
+        
+        // Store full path information for the module
+        const moduleInfo = {
+          folder: relativePath,
+          name: moduleBaseName,
+          fullPath: path.join(relativePath, moduleBaseName),
+          symbols: Object.keys(content)
+        };
+        
+        // Cache each top-level symbol with its module info
+        for (const symbol of moduleInfo.symbols) {
+          symbolDefinitionCache.set(symbol, moduleInfo);
         }
       }
     }
@@ -74,60 +56,24 @@ function buildSymbolDefinitionMap() {
 }
 
 /**
- * Extracts all top-level symbols from a JSON object
- */
-function extractTopLevelSymbols(obj) {
-  return Array.from(new Set(
-    Object.keys(obj).concat(
-      Object.values(obj)
-        .filter(v => typeof v === 'object' && v !== null)
-        .flatMap(v => extractReferencedSymbols(v))
-    )
-  ));
-}
-
-/**
- * Finds all referenced symbols in an object
- */
-function extractReferencedSymbols(obj) {
-  const symbols = new Set();
-  
-  JSON.stringify(obj, (key, value) => {
-    if (typeof value === 'string' && value.startsWith('{') && value.endsWith('}')) {
-      const symbol = value.slice(1, -1).split('.')[0];
-      symbols.add(symbol);
-    }
-    return value;
-  });
-  
-  return Array.from(symbols);
-}
-
-/**
  * Analyzes dependencies between modules
  */
 function analyzeDependencies(jsonPath) {
   const content = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
-  const currentModule = path.basename(jsonPath, CONFIG.fileExtension.source);
+  const currentModule = path.basename(jsonPath, '.json');
   const dependencies = new Set();
 
-  function findDependencies(obj) {
-    if (typeof obj !== 'object' || obj === null) return;
-    
-    Object.values(obj).forEach(value => {
-      if (typeof value === 'string' && value.startsWith('{') && value.endsWith('}')) {
-        const symbol = value.slice(1, -1).split('.')[0];
-        const moduleInfo = symbolDefinitionCache.get(symbol);
-        if (moduleInfo && moduleInfo.name !== currentModule) {
-          dependencies.add(moduleInfo);
-        }
-      } else if (typeof value === 'object') {
-        findDependencies(value);
+  JSON.stringify(content, (key, value) => {
+    if (typeof value === 'string' && value.startsWith('{') && value.endsWith('}')) {
+      const symbol = value.slice(1, -1).split('.')[0];
+      const moduleInfo = symbolDefinitionCache.get(symbol);
+      if (moduleInfo && moduleInfo.name !== currentModule) {
+        dependencies.add(moduleInfo);
       }
-    });
-  }
+    }
+    return value;
+  });
 
-  findDependencies(content);
   return Array.from(dependencies);
 }
 
@@ -160,21 +106,18 @@ function processJsonReferences(obj, currentModule) {
       const moduleInfo = symbolDefinitionCache.get(symbol);
       
       if (moduleInfo && moduleInfo.name !== currentModule) {
+        // Add module prefix for external references
         return `${moduleInfo.name}.${parts.join('.')}`;
       }
-      return value.slice(1, -1); // Remove curly braces for internal references
     }
     return value;
   }, 2);
 }
 
-/**
- * Converts a JSON file to TypeScript
- */
 function convertJsonToTs(jsonPath) {
   const relativePath = path.relative(jsonDir, jsonPath);
-  const tsPath = path.join(tsDir, relativePath.replace(CONFIG.fileExtension.source, CONFIG.fileExtension.output));
-  const moduleName = path.basename(tsPath, CONFIG.fileExtension.output).replace(/-/g, "_");
+  const tsPath = path.join(tsDir, relativePath.replace(/\.json$/, ".ts"));
+  const moduleName = path.basename(tsPath, ".ts").replace(/-/g, "_");
 
   try {
     const jsonContent = fs.readFileSync(jsonPath, 'utf8');
@@ -192,13 +135,7 @@ function convertJsonToTs(jsonPath) {
       .replace(/"([^"]+)":/g, (match, p1) => 
         p1.includes("-") ? `'${p1}':` : `${p1}:`);
 
-    const tsContent = [
-      "// Generated by convert-theme.js",
-      imports,
-      "",
-      `export const ${moduleName} = ${processedJson};`,
-      "" // Ensure trailing newline
-    ].join('\n');
+    const tsContent = `${imports}\n\nexport const ${moduleName} = ${processedJson};\n`;
 
     ensureDirectoryExistence(tsPath);
     fs.writeFileSync(tsPath, tsContent, "utf8");
@@ -218,12 +155,7 @@ function removeValueKeys(obj) {
   );
 }
 
-/**
- * Converts all JSON files to TypeScript
- */
 function convertAllFiles() {
-  console.log(`🔍 Scanning ${CONFIG.sourceDir} directory for JSON files...`);
-  
   // First build the symbol definition map
   buildSymbolDefinitionMap();
   
@@ -233,15 +165,15 @@ function convertAllFiles() {
       const fullPath = path.join(dir, dirent.name);
       if (dirent.isDirectory()) {
         processDirectory(fullPath);
-      } else if (dirent.isFile() && dirent.name.endsWith(CONFIG.fileExtension.source)) {
+      } else if (dirent.isFile() && dirent.name.endsWith(".json")) {
         convertJsonToTs(fullPath);
       }
     });
   }
 
   processDirectory(jsonDir);
-  console.log(`✨ Conversion complete! TypeScript files generated in ${CONFIG.outputDir}/`);
 }
 
 // Start conversion
 convertAllFiles();
+console.log("👀 Watching JSON files in:", jsonDir);
