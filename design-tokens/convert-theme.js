@@ -8,24 +8,9 @@ const __dirname = path.dirname(__filename);
 const jsonDir = path.join(__dirname, "json");
 const tsDir = path.join(__dirname, "ts");
 
-// Cache for storing symbol definitions and their full paths
+// Cache for storing symbol definitions and module information
 const symbolDefinitionCache = new Map();
-
-// Tracks the dependency structure
-const DEPENDENCY_RULES = {
-  theme: {
-    allowedImports: ['brand', 'globals'],
-    circular: false
-  },
-  brand: {
-    allowedImports: ['theme', 'globals'],
-    circular: false
-  },
-  globals: {
-    allowedImports: [],
-    circular: false
-  }
-};
+const brandModules = new Set();
 
 function ensureDirectoryExistence(filePath) {
   const dirname = path.dirname(filePath);
@@ -35,7 +20,38 @@ function ensureDirectoryExistence(filePath) {
 }
 
 /**
- * Builds a complete map of symbol definitions including nested paths
+ * Splits a brand JSON file into multiple TypeScript files
+ */
+function splitBrandFile(brandName, jsonContent) {
+  const { components, ...brandBase } = jsonContent;
+  
+  return {
+    base: brandBase,
+    components: components || {}
+  };
+}
+
+/**
+ * Creates a theme variation (light/dark) for a specific brand
+ */
+function createThemeVariation(theme, brandName, variation) {
+  // Deep clone the theme object
+  const brandTheme = JSON.parse(JSON.stringify(theme));
+  
+  // Update references to point to the specific brand
+  JSON.stringify(brandTheme, (key, value) => {
+    if (typeof value === 'string' && value.includes('brand.')) {
+      // Update brand references to point to the specific brand
+      return value.replace(/\{brand\./g, `{${brandName}.`);
+    }
+    return value;
+  });
+
+  return brandTheme;
+}
+
+/**
+ * Builds a complete map of symbol definitions including brand information
  */
 function buildSymbolDefinitionMap() {
   function scanDirectory(dir) {
@@ -51,18 +67,22 @@ function buildSymbolDefinitionMap() {
           const content = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
           const relativePath = path.relative(jsonDir, dir);
           const moduleBaseName = path.basename(file.name, '.json')
-            .replace(/-/g, ''); // Remove hyphens from module names
+            .replace(/-/g, '');
           
-          // Store full path information for the module
+          // Store brand names if this is a brand file
+          if (relativePath === 'brand') {
+            brandModules.add(moduleBaseName);
+          }
+          
+          // Store module information
           const moduleInfo = {
             folder: relativePath,
             name: moduleBaseName,
             fullPath: path.join(relativePath, moduleBaseName),
-            type: relativePath.split(path.sep)[0], // Get type (brand/theme/globals)
+            type: relativePath.split(path.sep)[0],
             symbols: Object.keys(content)
           };
           
-          // Cache each top-level symbol with its module info
           for (const symbol of moduleInfo.symbols) {
             symbolDefinitionCache.set(symbol, moduleInfo);
           }
@@ -77,129 +97,109 @@ function buildSymbolDefinitionMap() {
 }
 
 /**
- * Determines required imports based on file type and location
+ * Generates import statements for a specific module
  */
-function determineRequiredImports(fileInfo) {
+function generateImports(moduleInfo) {
   const imports = new Set();
   
-  // Add globalvalue import for all files except globals
-  if (fileInfo.type !== 'globals') {
-    imports.add({
-      folder: 'globals',
-      name: 'globalvalue',
-      fullPath: 'globals/globalvalue'
-    });
+  // Add globalvalue import for all non-globals files
+  if (moduleInfo.type !== 'globals') {
+    imports.add(`import { globalvalue } from '../globals/globalvalue';`);
   }
-
-  // Add theme imports for brand files
-  if (fileInfo.type === 'brand') {
-    imports.add({
-      folder: 'theme',
-      name: 'light',
-      fullPath: 'theme/light'
-    });
-    imports.add({
-      folder: 'theme',
-      name: 'dark',
-      fullPath: 'theme/dark'
-    });
-  }
-
-  return Array.from(imports);
-}
-
-/**
- * Generates import statements with proper relative paths
- */
-function generateImports(currentFilePath, requiredImports) {
-  const currentDir = path.dirname(currentFilePath);
   
-  return requiredImports.map(dep => {
-    const relativePath = path.relative(currentDir, path.join(tsDir, dep.folder))
-      .replace(/\\/g, '/') // Ensure forward slashes
-      .replace(/^\.\/\.\./, '..') // Clean up unnecessary ./../
-      .replace(/\/\.\//, '/'); // Clean up /./ in paths
-    
-    const importPath = relativePath.startsWith('.') ? 
-      `${relativePath}/${dep.name}` : 
-      `./${relativePath}/${dep.name}`;
-    
-    return `import { ${dep.name} } from '${importPath}';`;
-  }).join('\n');
+  // Add specific imports based on module type
+  if (moduleInfo.type === 'theme') {
+    const brandName = moduleInfo.name.replace(/light|dark/g, '');
+    imports.add(`import { ${brandName} } from '../brand/${brandName}';`);
+  } else if (moduleInfo.type === 'brand' && moduleInfo.name.endsWith('components')) {
+    const brandName = moduleInfo.name.replace('components', '');
+    imports.add(`import { ${brandName}light } from '../theme/${brandName}light';`);
+    imports.add(`import { ${brandName}dark } from '../theme/${brandName}dark';`);
+  }
+  
+  return Array.from(imports).join('\n');
 }
 
 /**
- * Process references in JSON values and add proper module prefixes
+ * Process references in JSON values to match the new structure
  */
-function processJsonReferences(obj, fileInfo) {
+function processReferences(obj, brandName, moduleType) {
   return JSON.stringify(obj, (key, value) => {
-    if (typeof value === 'string' && value.startsWith('{') && value.endsWith('}')) {
-      const parts = value.slice(1, -1).split('.');
-      const symbol = parts[0];
-      const moduleInfo = symbolDefinitionCache.get(symbol);
-      
-      if (moduleInfo && moduleInfo.name !== fileInfo.name) {
-        // Add module prefix for external references
-        return `${moduleInfo.name}.${parts.join('.')}`;
+    if (typeof value === 'string' && value.startsWith('{')) {
+      // Update references based on module type and brand
+      if (moduleType === 'theme') {
+        return value.replace(/\{brand\./g, `{${brandName}.`);
       }
-      return value.slice(1, -1); // Remove braces for internal references
     }
     return value;
-  }, 2);
+  }, 2).replace(/"([^"]+)":/g, (match, p1) => 
+    p1.includes("-") ? `'${p1}':` : `${p1}:`);
 }
 
-function convertJsonToTs(jsonPath) {
-  const relativePath = path.relative(jsonDir, jsonPath);
-  const tsPath = path.join(tsDir, relativePath.replace(/\.json$/, ".ts"));
-  const moduleName = path.basename(tsPath, ".ts")
-    .replace(/-/g, ''); // Remove hyphens from module name
-  
-  const fileInfo = {
-    name: moduleName,
-    type: path.dirname(relativePath).split(path.sep)[0],
-    fullPath: relativePath
-  };
-
+/**
+ * Converts brand JSON files into multiple TypeScript files
+ */
+function convertBrandToTs(brandPath, brandName) {
   try {
-    const jsonContent = fs.readFileSync(jsonPath, 'utf8');
-    let jsonData = JSON.parse(jsonContent);
-    jsonData = removeValueKeys(jsonData);
-
-    // Determine required imports based on file type
-    const requiredImports = determineRequiredImports(fileInfo);
+    const jsonContent = JSON.parse(fs.readFileSync(brandPath, 'utf8'));
+    const { base, components } = splitBrandFile(brandName, jsonContent);
     
-    // Generate imports
-    const imports = generateImports(tsPath, requiredImports);
+    // Generate base brand file
+    const basePath = path.join(tsDir, 'brand', `${brandName}.ts`);
+    const baseContent = `// Generated by convert-theme.js
+import { globalvalue } from '../globals/globalvalue';
+
+export const ${brandName} = ${processReferences(base, brandName, 'brand')};
+`;
     
-    // Process JSON with proper references
-    const processedJson = processJsonReferences(jsonData, fileInfo)
-      .replace(/"([^"]+)":/g, (match, p1) => 
-        p1.includes("-") ? `'${p1}':` : `${p1}:`);
+    // Generate components file
+    const componentsPath = path.join(tsDir, 'brand', `${brandName}components.ts`);
+    const componentsContent = `// Generated by convert-theme.js
+import { globalvalue } from '../globals/globalvalue';
+import { ${brandName}light } from '../theme/${brandName}light';
+import { ${brandName}dark } from '../theme/${brandName}dark';
 
-    const tsContent = [
-      "// Generated by convert-theme.js",
-      imports,
-      "",
-      `export const ${moduleName} = ${processedJson};`,
-      "" // Ensure trailing newline
-    ].join('\n');
-
-    ensureDirectoryExistence(tsPath);
-    fs.writeFileSync(tsPath, tsContent, "utf8");
-    console.log(`✅ Converted: ${jsonPath} → ${tsPath}`);
+export const ${brandName}components = ${processReferences(components, brandName, 'components')};
+`;
+    
+    // Write files
+    ensureDirectoryExistence(basePath);
+    fs.writeFileSync(basePath, baseContent);
+    fs.writeFileSync(componentsPath, componentsContent);
+    
+    console.log(`✅ Generated brand files for ${brandName}`);
   } catch (error) {
-    console.error(`❌ Error processing ${jsonPath}:`, error);
+    console.error(`❌ Error processing brand ${brandName}:`, error);
   }
 }
 
-function removeValueKeys(obj) {
-  if (typeof obj !== "object" || obj === null) return obj;
-  if ("value" in obj && Object.keys(obj).length === 1) {
-    return obj.value;
+/**
+ * Converts theme JSON files into brand-specific TypeScript files
+ */
+function convertThemeToTs(themePath, themeName) {
+  try {
+    const themeContent = JSON.parse(fs.readFileSync(themePath, 'utf8'));
+    
+    // Generate theme file for each brand
+    for (const brandName of brandModules) {
+      const brandThemePath = path.join(tsDir, 'theme', `${brandName}${themeName}.ts`);
+      const brandTheme = createThemeVariation(themeContent, brandName, themeName);
+      
+      const content = `// Generated by convert-theme.js
+import { globalvalue } from '../globals/globalvalue';
+import { ${brandName} } from '../brand/${brandName}';
+
+export const ${brandName}${themeName} = ${processReferences(brandTheme, brandName, 'theme')};
+`;
+      
+      ensureDirectoryExistence(brandThemePath);
+      fs.writeFileSync(brandThemePath, content);
+      
+      console.log(`✅ Generated ${themeName} theme for ${brandName}`);
+    }
+  } catch (error) {
+    console.error(`❌ Error processing theme ${themeName}:`, error);
   }
-  return Object.fromEntries(
-    Object.entries(obj).map(([key, value]) => [key, removeValueKeys(value)])
-  );
 }
 
 function convertAllFiles() {
@@ -207,18 +207,29 @@ function convertAllFiles() {
   buildSymbolDefinitionMap();
   
   console.log("📦 Converting files...");
-  function processDirectory(dir) {
-    fs.readdirSync(dir, { withFileTypes: true }).forEach(dirent => {
-      const fullPath = path.join(dir, dirent.name);
-      if (dirent.isDirectory()) {
-        processDirectory(fullPath);
-      } else if (dirent.isFile() && dirent.name.endsWith(".json")) {
-        convertJsonToTs(fullPath);
-      }
-    });
-  }
-
-  processDirectory(jsonDir);
+  
+  // Process brand files
+  brandModules.forEach(brandName => {
+    const brandPath = path.join(jsonDir, 'brand', `${brandName}.json`);
+    convertBrandToTs(brandPath, brandName);
+  });
+  
+  // Process theme files
+  ['light', 'dark'].forEach(theme => {
+    const themePath = path.join(jsonDir, 'theme', `${theme}.json`);
+    convertThemeToTs(themePath, theme);
+  });
+  
+  // Convert globals
+  const globalsPath = path.join(jsonDir, 'globals', 'globalvalue.json');
+  const globalsContent = JSON.parse(fs.readFileSync(globalsPath, 'utf8'));
+  const globalsOutput = path.join(tsDir, 'globals', 'globalvalue.ts');
+  
+  ensureDirectoryExistence(globalsOutput);
+  fs.writeFileSync(globalsOutput, `// Generated by convert-theme.js
+export const globalvalue = ${JSON.stringify(globalsContent, null, 2)};
+`);
+  
   console.log("✨ Conversion complete!");
 }
 
