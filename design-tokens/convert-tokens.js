@@ -170,6 +170,7 @@ class TokenProcessor {
   }
 
   async writeTokenFile(path, content, imports) {
+    console.log(`Writing token file: ${path}`);
     const moduleName = this.formatModuleName(
       basename(path, this.config.extensions.output)
     );
@@ -199,6 +200,7 @@ class TokenProcessor {
 
   async convert() {
     console.log('Starting token conversion...');
+    console.log(`Looking for tokens in: ${this.config.rootDir}`);
     
     await this.scanTokens();
 
