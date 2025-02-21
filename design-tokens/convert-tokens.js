@@ -1,7 +1,6 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { EventEmitter } from 'events';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,34 +14,60 @@ const DEFAULT_CONFIG = {
   }
 };
 
-// Global token registry to store all tokens
+// Token registry that handles hierarchical token resolution
 class TokenRegistry {
   constructor() {
     this.tokens = new Map();
-    this.aliasMap = new Map();
+    this.references = new Map();
+    this.resolvedTokens = new Map();
+    this.processingStack = new Set(); // For circular reference detection
   }
 
   async buildRegistry(jsonDir) {
-    // First pass: Load all tokens
-    await this.loadAllTokens(jsonDir);
-    // Second pass: Build alias map
-    this.buildAliasMap();
+    // Load files in specific order
+    await this.loadGlobalTokens(jsonDir);
+    await this.loadBrandTokens(jsonDir);
+    await this.loadThemeTokens(jsonDir);
+    this.resolveAllReferences();
   }
 
-  async loadAllTokens(dir) {
-    const entries = await fs.promises.readdir(dir, { withFileTypes: true });
-    
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-      
-      if (entry.isDirectory()) {
-        await this.loadAllTokens(fullPath);
-      } else if (entry.isFile() && entry.name.endsWith('.json')) {
-        const content = JSON.parse(await fs.promises.readFile(fullPath, 'utf8'));
-        const relativePath = path.relative(DEFAULT_CONFIG.jsonDir, fullPath);
-        const namespace = path.dirname(relativePath) === '.' ? 'globals' : path.dirname(relativePath);
-        
-        this.registerTokens(namespace, content);
+  async loadGlobalTokens(jsonDir) {
+    const globalsDir = path.join(jsonDir, 'globals');
+    if (fs.existsSync(globalsDir)) {
+      const files = await fs.promises.readdir(globalsDir);
+      for (const file of files) {
+        if (file.endsWith('.json')) {
+          const content = JSON.parse(await fs.promises.readFile(path.join(globalsDir, file), 'utf8'));
+          this.registerTokens('globals', content);
+        }
+      }
+    }
+  }
+
+  async loadBrandTokens(jsonDir) {
+    const brandDir = path.join(jsonDir, 'brand');
+    if (fs.existsSync(brandDir)) {
+      const files = await fs.promises.readdir(brandDir);
+      for (const file of files) {
+        if (file.endsWith('.json')) {
+          const content = JSON.parse(await fs.promises.readFile(path.join(brandDir, file), 'utf8'));
+          const brandName = path.basename(file, '.json');
+          this.registerTokens(`brand.${brandName}`, content);
+        }
+      }
+    }
+  }
+
+  async loadThemeTokens(jsonDir) {
+    const themeDir = path.join(jsonDir, 'theme');
+    if (fs.existsSync(themeDir)) {
+      const files = await fs.promises.readdir(themeDir);
+      for (const file of files) {
+        if (file.endsWith('.json')) {
+          const content = JSON.parse(await fs.promises.readFile(path.join(themeDir, file), 'utf8'));
+          const themeName = path.basename(file, '.json');
+          this.registerTokens(`theme.${themeName}`, content);
+        }
       }
     }
   }
@@ -51,41 +76,73 @@ class TokenRegistry {
     for (const [key, value] of Object.entries(tokens)) {
       const fullKey = prefix ? `${prefix}.${key}` : key;
       
-      if (typeof value === 'object' && value !== null && !value.value) {
-        this.registerTokens(namespace, value, fullKey);
-      } else {
-        const tokenKey = `${namespace}.${fullKey}`;
-        this.tokens.set(tokenKey, value);
-      }
-    }
-  }
-
-  buildAliasMap() {
-    for (const [key, value] of this.tokens.entries()) {
-      if (typeof value === 'object' && value.value) {
-        const aliasValue = value.value;
-        if (typeof aliasValue === 'string' && aliasValue.startsWith('{') && aliasValue.endsWith('}')) {
-          const reference = aliasValue.slice(1, -1);
-          this.aliasMap.set(key, reference);
+      if (typeof value === 'object' && value !== null) {
+        if (value.value !== undefined) {
+          const tokenKey = `${namespace}.${fullKey}`;
+          this.tokens.set(tokenKey, value);
+          
+          // Store reference if the value is a reference
+          if (typeof value.value === 'string' && value.value.startsWith('{') && value.value.endsWith('}')) {
+            this.references.set(tokenKey, value.value.slice(1, -1));
+          }
+        } else {
+          this.registerTokens(namespace, value, fullKey);
         }
       }
     }
   }
 
-  resolveReference(reference) {
-    // Handle direct references
-    let value = this.tokens.get(reference);
-    if (value && typeof value === 'object' && value.value) {
-      value = value.value;
+  resolveAllReferences() {
+    // First pass: resolve global references
+    for (const [tokenKey, reference] of this.references.entries()) {
+      if (reference.startsWith('colors.') || reference.startsWith('numbers.') || reference.startsWith('typography.')) {
+        this.resolveReference(tokenKey, `globals.${reference}`);
+      }
     }
-    
-    // Handle aliases
+
+    // Second pass: resolve brand references
+    for (const [tokenKey, reference] of this.references.entries()) {
+      if (reference.startsWith('colors.brand.')) {
+        const [brand] = tokenKey.split('.');
+        this.resolveReference(tokenKey, `${brand}.${reference}`);
+      }
+    }
+
+    // Third pass: resolve remaining references
+    for (const [tokenKey, reference] of this.references.entries()) {
+      if (!this.resolvedTokens.has(tokenKey)) {
+        this.resolveReference(tokenKey, reference);
+      }
+    }
+  }
+
+  resolveReference(tokenKey, reference, stack = new Set()) {
+    if (stack.has(tokenKey)) {
+      console.error(`Circular reference detected: ${Array.from(stack).join(' -> ')} -> ${tokenKey}`);
+      return this.tokens.get(tokenKey);
+    }
+
+    stack.add(tokenKey);
+
+    const token = this.tokens.get(tokenKey);
+    if (!token) return null;
+
+    let value = token.value;
     if (typeof value === 'string' && value.startsWith('{') && value.endsWith('}')) {
-      const nestedRef = value.slice(1, -1);
-      return this.resolveReference(nestedRef);
+      const ref = value.slice(1, -1);
+      const resolvedToken = this.resolveReference(ref, ref, stack);
+      if (resolvedToken) {
+        value = resolvedToken.value;
+        this.resolvedTokens.set(tokenKey, { ...token, value });
+      }
     }
-    
-    return value;
+
+    stack.delete(tokenKey);
+    return { ...token, value };
+  }
+
+  getResolvedToken(tokenKey) {
+    return this.resolvedTokens.get(tokenKey) || this.tokens.get(tokenKey);
   }
 }
 
@@ -94,18 +151,18 @@ class TokenProcessor {
     this.registry = registry;
   }
 
-  processTokens(tokens, filePath) {
+  processTokens(tokens, namespace) {
     const processValue = (value) => {
       if (typeof value !== 'string') return value;
       
       if (value.startsWith('{') && value.endsWith('}')) {
         const reference = value.slice(1, -1);
-        const resolved = this.registry.resolveReference(reference);
-        if (resolved === undefined) {
-          console.warn(`Warning: Unresolved reference "${reference}" in ${filePath}`);
+        const resolved = this.registry.getResolvedToken(`${namespace}.${reference}`);
+        if (!resolved) {
+          console.warn(`Warning: Unresolved reference "${reference}" in namespace "${namespace}"`);
           return value;
         }
-        return resolved;
+        return resolved.value;
       }
       
       return value;
@@ -143,8 +200,11 @@ class FileProcessor {
     try {
       const content = await fs.promises.readFile(filePath, 'utf8');
       const tokens = JSON.parse(content);
-      const processedTokens = this.processor.processTokens(tokens, filePath);
       
+      const relativePath = path.relative(this.config.jsonDir, filePath);
+      const namespace = path.dirname(relativePath) === '.' ? 'globals' : path.dirname(relativePath);
+      
+      const processedTokens = this.processor.processTokens(tokens, namespace);
       const outputPath = this.getOutputPath(filePath);
       const outputContent = this.generateOutput(processedTokens, filePath);
       
