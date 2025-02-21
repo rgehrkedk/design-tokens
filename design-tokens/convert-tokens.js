@@ -9,8 +9,8 @@ const __dirname = path.dirname(__filename);
 
 // Default configuration
 const DEFAULT_CONFIG = {
-  jsonDir: path.join(process.cwd(), 'tokens'),
-  outputDir: path.join(process.cwd(), 'dist'),
+  jsonDir: path.join(process.cwd(), 'json'),
+  outputDir: path.join(process.cwd(), 'ts'),
   fileExtensions: {
     input: '.json',
     output: '.ts'
@@ -207,27 +207,21 @@ class TokenConverter {
   }
 
   async initialize() {
-    await utils.ensureDir(this.config.jsonDir);
+    // Only ensure output directory exists, since input directory should already exist
     await utils.ensureDir(this.config.outputDir);
-    await this.createExampleToken();
   }
 
-  async createExampleToken() {
-    const examplePath = path.join(this.config.jsonDir, 'example.json');
-    if (!fs.existsSync(examplePath)) {
-      const exampleToken = {
-        "colors": {
-          "primary": {
-            "value": "#0066CC",
-            "type": "color"
-          },
-          "secondary": {
-            "value": "{colors.primary}",
-            "type": "color"
-          }
-        }
-      };
-      await utils.writeFile(examplePath, JSON.stringify(exampleToken, null, 2));
+  async processDirectory(dir) {
+    const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      
+      if (entry.isDirectory()) {
+        await this.processDirectory(fullPath);
+      } else if (entry.isFile() && entry.name.endsWith(this.config.fileExtensions.input)) {
+        await this.fileProcessor.processFile(fullPath);
+      }
     }
   }
 
@@ -235,14 +229,8 @@ class TokenConverter {
     try {
       await this.initialize();
       
-      const files = await fs.promises.readdir(this.config.jsonDir, { withFileTypes: true });
-      
-      for (const file of files) {
-        if (file.isFile() && file.name.endsWith(this.config.fileExtensions.input)) {
-          const filePath = path.join(this.config.jsonDir, file.name);
-          await this.fileProcessor.processFile(filePath);
-        }
-      }
+      // Process all files in the json directory and its subdirectories
+      await this.processDirectory(this.config.jsonDir);
 
       if (this.config.watch.enabled) {
         this.startWatching();
@@ -256,7 +244,7 @@ class TokenConverter {
   }
 
   startWatching() {
-    console.log('Watching for changes...');
+    console.log(`Watching for changes in ${this.config.jsonDir}...`);
     
     this.watcher = fs.watch(this.config.jsonDir, { recursive: true }, 
       async (eventType, filename) => {
@@ -264,6 +252,10 @@ class TokenConverter {
         
         const filePath = path.join(this.config.jsonDir, filename);
         console.log(`File ${filename} changed, processing...`);
+        
+        // Ensure the containing directory exists in the output
+        const outputDir = path.dirname(this.fileProcessor.getOutputPath(filePath));
+        await utils.ensureDir(outputDir);
         
         try {
           await this.fileProcessor.processFile(filePath);
