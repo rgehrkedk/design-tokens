@@ -26,7 +26,7 @@ class TokenReferenceTracker {
 
 // File Discovery and Processing
 async function discoverTokenFiles() {
-    const rootDir = resolve(__dirname, '..', 'json');
+    const rootDir = resolve(process.cwd(), 'json');
     try {
         const files = await readdir(rootDir);
         return files
@@ -174,7 +174,7 @@ async function convertDesignTokens() {
         const typescript = generateTypeScript(resolvedTokens, tracker);
         
         // Write output
-        const outputPath = resolve(__dirname, '..', 'dist', 'tokens.ts');
+        const outputPath = resolve(process.cwd(), 'dist', 'tokens.ts');
         await writeFile(outputPath, typescript);
         console.log('Successfully converted design tokens to TypeScript');
         
