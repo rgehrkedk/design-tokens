@@ -20,7 +20,9 @@ class TokenRegistry {
     this.tokens = new Map();
     this.references = new Map();
     this.resolvedTokens = new Map();
+    this.dependencies = new Map();
     this.processingStack = new Set(); // For circular reference detection
+    this.fileTokens = new Map(); // Maps files to their tokens
   }
 
   async buildRegistry(jsonDir) {
@@ -37,8 +39,10 @@ class TokenRegistry {
       const files = await fs.promises.readdir(globalsDir);
       for (const file of files) {
         if (file.endsWith('.json')) {
-          const content = JSON.parse(await fs.promises.readFile(path.join(globalsDir, file), 'utf8'));
-          this.registerTokens('globals', content);
+          const filePath = path.join(globalsDir, file);
+          const content = JSON.parse(await fs.promises.readFile(filePath, 'utf8'));
+          this.fileTokens.set(filePath, content);
+          this.registerTokens('globals', content, '', filePath);
         }
       }
     }
@@ -72,21 +76,28 @@ class TokenRegistry {
     }
   }
 
-  registerTokens(namespace, tokens, prefix = '') {
+  registerTokens(namespace, tokens, prefix = '', sourceFile = '') {
     for (const [key, value] of Object.entries(tokens)) {
       const fullKey = prefix ? `${prefix}.${key}` : key;
       
       if (typeof value === 'object' && value !== null) {
         if (value.value !== undefined) {
           const tokenKey = `${namespace}.${fullKey}`;
-          this.tokens.set(tokenKey, value);
+          this.tokens.set(tokenKey, { ...value, sourceFile });
           
           // Store reference if the value is a reference
           if (typeof value.value === 'string' && value.value.startsWith('{') && value.value.endsWith('}')) {
-            this.references.set(tokenKey, value.value.slice(1, -1));
+            const refKey = value.value.slice(1, -1);
+            this.references.set(tokenKey, refKey);
+            
+            // Track dependencies
+            if (!this.dependencies.has(sourceFile)) {
+              this.dependencies.set(sourceFile, new Set());
+            }
+            this.dependencies.get(sourceFile).add(refKey);
           }
         } else {
-          this.registerTokens(namespace, value, fullKey);
+          this.registerTokens(namespace, value, fullKey, sourceFile);
         }
       }
     }
@@ -194,6 +205,18 @@ class FileProcessor {
     this.config = config;
     this.registry = registry;
     this.processor = new TokenProcessor(registry);
+    this.importMap = new Map();
+  }
+
+  addImport(fromFile, toFile, importName) {
+    if (!this.importMap.has(fromFile)) {
+      this.importMap.set(fromFile, new Map());
+    }
+    const fileImports = this.importMap.get(fromFile);
+    if (!fileImports.has(toFile)) {
+      fileImports.set(toFile, new Set());
+    }
+    fileImports.get(toFile).add(importName);
   }
 
   async processFile(filePath) {
@@ -228,11 +251,35 @@ class FileProcessor {
   generateOutput(tokens, filePath) {
     const moduleName = path.basename(filePath, this.config.fileExtensions.input)
       .replace(/[^a-zA-Z0-9_]/g, '_');
+    
+    // Get dependencies for this file
+    const dependencies = this.registry.dependencies.get(filePath) || new Set();
+    const imports = new Set();
+    
+    // Generate imports
+    for (const dep of dependencies) {
+      const [category, ...rest] = dep.split('.');
+      const importPath = category === 'colors' ? 'globals/colors' :
+                        category === 'numbers' ? 'globals/numbers' :
+                        category === 'typography' ? 'globals/typography' :
+                        null;
       
+      if (importPath) {
+        const relativePath = path.relative(
+          path.dirname(this.getOutputPath(filePath)),
+          path.join(this.config.outputDir, importPath)
+        ).replace(/\\/g, '/');
+        
+        imports.add(`import { ${category} } from '${relativePath.startsWith('.') ? relativePath : './' + relativePath}';`);
+      }
+    }
+    
+    const importStatements = Array.from(imports).join('\n');
+    
     return `// Generated from ${path.relative(process.cwd(), filePath)}
 // Do not edit directly
 
-export const ${moduleName} = ${JSON.stringify(tokens, null, 2)};
+${importStatements ? importStatements + '\n\n' : ''}export const ${moduleName} = ${JSON.stringify(tokens, null, 2)};
 `;
   }
 
