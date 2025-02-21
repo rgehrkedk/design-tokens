@@ -1,72 +1,200 @@
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { EventEmitter } from 'events';
+import { Worker } from 'worker_threads';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Configuration and cache
-const CONFIG = {
-  jsonDir: path.join(__dirname, "json"),
-  tsDir: path.join(__dirname, "ts"),
+// Default configuration with all options
+const DEFAULT_CONFIG = {
+  jsonDir: path.join(__dirname, 'json'),
+  outputDir: path.join(__dirname, 'ts'),
   fileExtensions: {
-    json: '.json',
-    ts: '.ts'
+    input: '.json',
+    output: '.ts'
+  },
+  referencePatterns: [
+    { pattern: /\{([^}]+)\}/, format: (token) => `{${token}}` },
+    { pattern: /\$([^\/\s]+)/, format: (token) => `$${token}` }
+  ],
+  processors: {
+    pre: [],
+    post: []
+  },
+  validation: {
+    checkCircularDeps: true,
+    validateReferences: true,
+    requireFallbacks: false
+  },
+  cache: {
+    enabled: true,
+    directory: '.token-cache'
+  },
+  watch: {
+    enabled: false,
+    debounceMs: 100
   }
 };
 
-const cache = {
-  tokenDefinitions: new Map(),
-  brands: new Set(),
-  processedPaths: new Set()
-};
-
-// Utility functions
-const utils = {
-  ensureDir: (filePath) => {
-    const dirname = path.dirname(filePath);
-    if (!fs.existsSync(dirname)) {
-      fs.mkdirSync(dirname, { recursive: true });
+// Cache manager for token definitions and processing results
+class CacheManager {
+  constructor(config) {
+    this.config = config;
+    this.tokenCache = new Map();
+    this.fileCache = new Map();
+    this.referenceCache = new Map();
+    this.cacheDir = path.join(process.cwd(), config.cache.directory);
+    
+    if (config.cache.enabled) {
+      this.initializeCache();
     }
-  },
+  }
 
-  readJsonFile: (filePath) => {
+  initializeCache() {
+    if (!fs.existsSync(this.cacheDir)) {
+      fs.mkdirSync(this.cacheDir, { recursive: true });
+    }
+    this.loadCacheFromDisk();
+  }
+
+  loadCacheFromDisk() {
     try {
-      return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      const cacheFile = path.join(this.cacheDir, 'token-cache.json');
+      if (fs.existsSync(cacheFile)) {
+        const cache = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+        this.tokenCache = new Map(cache.tokens);
+        this.referenceCache = new Map(cache.references);
+      }
     } catch (error) {
-      console.error(`❌ Error reading/parsing ${filePath}:`, error);
-      return null;
+      console.warn('Failed to load cache from disk:', error);
     }
-  },
+  }
 
-  writeFile: async (filePath, content) => {
+  saveCache() {
+    if (!this.config.cache.enabled) return;
+    
     try {
-      utils.ensureDir(filePath);
-      await fs.promises.writeFile(filePath, content, 'utf8');
-      console.log(`✅ Created: ${filePath}`);
+      const cacheFile = path.join(this.cacheDir, 'token-cache.json');
+      const cache = {
+        tokens: Array.from(this.tokenCache.entries()),
+        references: Array.from(this.referenceCache.entries())
+      };
+      fs.writeFileSync(cacheFile, JSON.stringify(cache, null, 2));
     } catch (error) {
-      console.error(`❌ Error writing ${filePath}:`, error);
+      console.warn('Failed to save cache to disk:', error);
     }
-  },
+  }
 
-  getModuleName: (filePath) => 
-    path.basename(filePath, CONFIG.fileExtensions.json).replace(/-/g, '_'),
+  getCachedToken(key) {
+    return this.tokenCache.get(key);
+  }
 
-  formatTsContent: (imports, moduleName, jsonContent) => 
-    `${imports}\n\nexport const ${moduleName} = ${jsonContent};`
-};
+  setCachedToken(key, value) {
+    this.tokenCache.set(key, value);
+    this.saveCache();
+  }
 
-// Token Processor class for handling token references and formatting
-class TokenProcessor {
-  static findReferences(obj, excludeTheme = false) {
+  invalidateCache(filePath) {
+    const key = this.getCacheKey(filePath);
+    this.tokenCache.delete(key);
+    this.referenceCache.delete(key);
+    this.saveCache();
+  }
+
+  getCacheKey(filePath) {
+    return path.relative(this.config.jsonDir, filePath);
+  }
+}
+
+// Token validator for checking references and dependencies
+class TokenValidator {
+  constructor(config) {
+    this.config = config;
+    this.errors = [];
+    this.warnings = [];
+  }
+
+  validateTokens(tokens, filePath) {
+    this.errors = [];
+    this.warnings = [];
+    
+    if (this.config.validation.checkCircularDeps) {
+      this.checkCircularDependencies(tokens, filePath);
+    }
+    
+    if (this.config.validation.validateReferences) {
+      this.validateReferences(tokens, filePath);
+    }
+    
+    return {
+      isValid: this.errors.length === 0,
+      errors: this.errors,
+      warnings: this.warnings
+    };
+  }
+
+  checkCircularDependencies(tokens, filePath, visited = new Set()) {
+    const references = this.findReferences(tokens);
+    
+    for (const ref of references) {
+      if (visited.has(ref.path)) {
+        this.errors.push({
+          type: 'CircularDependency',
+          message: `Circular dependency detected: ${Array.from(visited).join(' -> ')} -> ${ref.path}`,
+          file: filePath
+        });
+        return;
+      }
+      
+      visited.add(ref.path);
+      const referencedToken = this.getReferencedToken(ref.path);
+      if (referencedToken) {
+        this.checkCircularDependencies(referencedToken, filePath, new Set(visited));
+      }
+      visited.delete(ref.path);
+    }
+  }
+
+  validateReferences(tokens, filePath) {
+    const references = this.findReferences(tokens);
+    
+    for (const ref of references) {
+      const referencedToken = this.getReferencedToken(ref.path);
+      
+      if (!referencedToken) {
+        this.errors.push({
+          type: 'InvalidReference',
+          message: `Invalid token reference: ${ref.path}`,
+          file: filePath
+        });
+      }
+      
+      if (this.config.validation.requireFallbacks && !ref.fallback) {
+        this.warnings.push({
+          type: 'MissingFallback',
+          message: `Missing fallback value for reference: ${ref.path}`,
+          file: filePath
+        });
+      }
+    }
+  }
+
+  findReferences(tokens) {
     const references = new Set();
     
-    JSON.stringify(obj, (_, value) => {
-      if (typeof value === 'string' && value.startsWith('{') && value.endsWith('}')) {
-        const token = value.slice(1, -1).split('.')[0];
-        const definition = cache.tokenDefinitions.get(token);
-        if (definition && (!excludeTheme || !definition.isTheme)) {
-          references.add(definition);
+    JSON.stringify(tokens, (_, value) => {
+      if (typeof value === 'string') {
+        for (const pattern of this.config.referencePatterns) {
+          const matches = value.match(pattern.pattern);
+          if (matches) {
+            references.add({
+              path: matches[1],
+              pattern: pattern.format,
+              value: value
+            });
+          }
         }
       }
       return value;
@@ -75,209 +203,241 @@ class TokenProcessor {
     return Array.from(references);
   }
 
-  static formatJson(obj) {
-    return JSON.stringify(obj, null, 2)
-      .replace(/"([^"]+)":/g, (_, p1) => 
-        p1.includes('-') ? `'${p1}':` : `${p1}:`)
-      .replace(/"\{([^}]+)\}"/g, (_, p1) => {
-        const parts = p1.split('.');
-        const token = parts[0];
-        const definition = cache.tokenDefinitions.get(token);
-        
-        if (definition) {
-          const prefix = `${definition.module}.`;
-          return parts.length === 2 
-            ? `${prefix}${token}['${parts[1]}']`
-            : `${prefix}${token}.${parts[1]}${parts.slice(2).map(p => `['${p}']`).join('')}`;
-        }
-        return `{${p1}}`;
-      })
-      .replace(/"([^"]+)"/g, "'$1'");
-  }
-
-  static generateImports(references, currentPath) {
-    return Array.from(new Set(
-      references.map(ref => {
-        const relativePath = path.relative(
-          path.dirname(currentPath),
-          path.join(CONFIG.tsDir, ref.path)
-        );
-        const importPath = relativePath.startsWith('.') ? relativePath : './' + relativePath;
-        return `import { ${ref.module} } from '${importPath}/${ref.module}';`;
-      })
-    )).join('\n');
+  getReferencedToken(path) {
+    // Implementation to get referenced token
+    // This would need to be connected to the token registry
+    return null;
   }
 }
 
-// File Processing class
-class FileProcessor {
-  static async processRegularFile(jsonPath) {
-    const content = utils.readJsonFile(jsonPath);
-    if (!content) return;
-
-    const relativePath = path.relative(CONFIG.jsonDir, jsonPath);
-    if (relativePath.startsWith('theme')) return;
-
-    const tsPath = path.join(CONFIG.tsDir, relativePath.replace(/\.json$/, ".ts"));
-    const moduleName = utils.getModuleName(jsonPath);
-
-    if (relativePath.startsWith('brand')) {
-      await FileProcessor.processBrandFile(jsonPath, content, tsPath, moduleName);
-      return;
-    }
-
-    const references = TokenProcessor.findReferences(content);
-    const imports = TokenProcessor.generateImports(references, tsPath);
-    const formattedJson = TokenProcessor.formatJson(content);
-    
-    await utils.writeFile(
-      tsPath, 
-      utils.formatTsContent(imports, moduleName, formattedJson)
-    );
+// Token processor for handling references and transformations
+class TokenProcessor {
+  constructor(config, validator, cache) {
+    this.config = config;
+    this.validator = validator;
+    this.cache = cache;
+    this.processors = {
+      pre: [...(config.processors.pre || [])],
+      post: [...(config.processors.post || [])]
+    };
   }
 
-  static async processBrandFile(jsonPath, content, tsPath, moduleName) {
-    const { components, ...brandData } = content;
-
-    // Process main brand file
-    const references = TokenProcessor.findReferences(brandData);
-    const imports = TokenProcessor.generateImports(references, tsPath);
-    const formattedJson = TokenProcessor.formatJson(brandData);
+  async processTokens(tokens, filePath) {
+    const cacheKey = this.cache.getCacheKey(filePath);
+    const cachedResult = this.cache.getCachedToken(cacheKey);
     
-    await utils.writeFile(
-      tsPath,
-      utils.formatTsContent(imports, moduleName, formattedJson)
-    );
-
-    if (components) {
-      const componentsPath = tsPath.replace('.ts', 'components.ts');
-      const componentRefs = TokenProcessor.findReferences(components);
-      const componentImports = TokenProcessor.generateImports(componentRefs, componentsPath);
-      const formattedComponents = TokenProcessor.formatJson(components);
-      
-      const themeImports = `import { ${moduleName}_light } from '../theme/${moduleName}_light';\nimport { ${moduleName}_dark } from '../theme/${moduleName}_dark';`;
-      const combinedImports = componentImports ? `${themeImports}\n${componentImports}` : themeImports;
-      
-      await utils.writeFile(
-        componentsPath,
-        utils.formatTsContent(combinedImports, `${moduleName}_components`, formattedComponents)
-      );
+    if (cachedResult) {
+      return cachedResult;
     }
+
+    // Run pre-processors
+    let processedTokens = tokens;
+    for (const processor of this.processors.pre) {
+      processedTokens = await processor(processedTokens, filePath);
+    }
+
+    // Validate tokens
+    const validationResult = this.validator.validateTokens(processedTokens, filePath);
+    if (!validationResult.isValid) {
+      throw new Error(`Token validation failed: ${JSON.stringify(validationResult.errors)}`);
+    }
+
+    // Process references
+    processedTokens = this.processReferences(processedTokens);
+
+    // Run post-processors
+    for (const processor of this.processors.post) {
+      processedTokens = await processor(processedTokens, filePath);
+    }
+
+    // Cache result
+    this.cache.setCachedToken(cacheKey, processedTokens);
+
+    return processedTokens;
   }
 
-  static async processThemeFiles() {
-    const themeDir = path.join(CONFIG.jsonDir, 'theme');
-    if (!fs.existsSync(themeDir)) return;
+  processReferences(tokens) {
+    const processValue = (value) => {
+      if (typeof value !== 'string') return value;
 
-    const themeFiles = fs.readdirSync(themeDir)
-      .filter(f => f.endsWith('.json'));
-
-    for (const themeFile of themeFiles) {
-      const themeName = path.basename(themeFile, '.json');
-      const content = utils.readJsonFile(path.join(themeDir, themeFile));
-      if (!content) continue;
-
-      await Promise.all(Array.from(cache.brands).map(async brand => {
-        const tsPath = path.join(CONFIG.tsDir, 'theme', `${brand}_${themeName}.ts`);
-        const references = TokenProcessor.findReferences(content, true);
-        const imports = TokenProcessor.generateImports(references, tsPath);
-        const formattedJson = TokenProcessor.formatJson(content);
-        const moduleName = `${brand}_${themeName}`;
-
-        await utils.writeFile(
-          tsPath,
-          utils.formatTsContent(imports, moduleName, formattedJson)
-        );
-      }));
-    }
-  }
-}
-
-// Scanner for building token definitions
-class TokenScanner {
-  static scan(dir = CONFIG.jsonDir) {
-    if (!fs.existsSync(dir)) {
-      console.error(`❌ Directory not found: ${dir}`);
-      fs.mkdirSync(dir, { recursive: true });
-      return;
-    }
-
-    const files = fs.readdirSync(dir, { withFileTypes: true });
-    
-    for (const file of files) {
-      const fullPath = path.join(dir, file.name);
-      const relativePath = path.relative(CONFIG.jsonDir, dir);
-      
-      if (file.isDirectory()) {
-        TokenScanner.scan(fullPath);
-      } else if (file.name.endsWith('.json')) {
-        TokenScanner.processFile(fullPath, relativePath, file.name);
+      for (const pattern of this.config.referencePatterns) {
+        value = value.replace(pattern.pattern, (match, token) => {
+          const resolvedToken = this.resolveTokenReference(token);
+          return resolvedToken !== undefined ? resolvedToken : match;
+        });
       }
+
+      return value;
+    };
+
+    return JSON.parse(
+      JSON.stringify(tokens, (key, value) => {
+        if (Array.isArray(value)) {
+          return value.map(processValue);
+        }
+        return processValue(value);
+      })
+    );
+  }
+
+  resolveTokenReference(tokenPath) {
+    const parts = tokenPath.split('.');
+    let current = this.cache.getCachedToken(parts[0]);
+
+    for (let i = 1; i < parts.length && current !== undefined; i++) {
+      current = current[parts[i]];
+    }
+
+    return current;
+  }
+}
+
+// File manager for handling file operations
+class FileManager {
+  constructor(config) {
+    this.config = config;
+    this.watcher = null;
+    this.emitter = new EventEmitter();
+  }
+
+  async readFile(filePath) {
+    try {
+      const content = await fs.promises.readFile(filePath, 'utf8');
+      return JSON.parse(content);
+    } catch (error) {
+      throw new Error(`Failed to read file ${filePath}: ${error.message}`);
     }
   }
 
-  static processFile(fullPath, relativePath, fileName) {
-    if (relativePath === 'brand') {
-      cache.brands.add(path.basename(fileName, '.json'));
+  async writeFile(filePath, content) {
+    try {
+      const dir = path.dirname(filePath);
+      await fs.promises.mkdir(dir, { recursive: true });
+      await fs.promises.writeFile(filePath, content, 'utf8');
+    } catch (error) {
+      throw new Error(`Failed to write file ${filePath}: ${error.message}`);
     }
+  }
 
-    const content = utils.readJsonFile(fullPath);
-    if (!content) return;
+  async processDirectory(dir = this.config.jsonDir) {
+    const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    
+    const tasks = entries.map(async (entry) => {
+      const fullPath = path.join(dir, entry.name);
+      
+      if (entry.isDirectory()) {
+        return this.processDirectory(fullPath);
+      }
+      
+      if (entry.isFile() && entry.name.endsWith(this.config.fileExtensions.input)) {
+        return this.processFile(fullPath);
+      }
+    });
 
-    const moduleName = utils.getModuleName(fileName);
-    const keys = new Set(
-      Object.keys(content).filter(key => 
-        !(relativePath === 'brand' && key === 'components')
+    await Promise.all(tasks);
+  }
+
+  async processFile(filePath) {
+    const tokens = await this.readFile(filePath);
+    const processor = new TokenProcessor(this.config, new TokenValidator(this.config), new CacheManager(this.config));
+    const processedTokens = await processor.processTokens(tokens, filePath);
+    
+    const outputPath = this.getOutputPath(filePath);
+    const outputContent = this.generateOutput(processedTokens, filePath);
+    await this.writeFile(outputPath, outputContent);
+  }
+
+  getOutputPath(filePath) {
+    const relativePath = path.relative(this.config.jsonDir, filePath);
+    return path.join(
+      this.config.outputDir,
+      relativePath.replace(
+        this.config.fileExtensions.input,
+        this.config.fileExtensions.output
       )
     );
-    
-    keys.forEach(key => {
-      cache.tokenDefinitions.set(key, {
-        path: relativePath,
-        module: moduleName,
-        isGlobal: relativePath.startsWith('globals'),
-        isTheme: relativePath === 'theme'
-      });
-    });
   }
-}
 
-// Main conversion function
-async function convertFiles() {
-  console.log("🔍 Starting conversion process...");
-  console.log(`📁 Looking for JSON files in: ${CONFIG.jsonDir}`);
-  
-  // Create output directory if it doesn't exist
-  if (!fs.existsSync(CONFIG.tsDir)) {
-    fs.mkdirSync(CONFIG.tsDir, { recursive: true });
-  }
-  
-  // Build token definitions
-  TokenScanner.scan();
-  
-  // Process all files
-  const processFiles = async (dir = CONFIG.jsonDir) => {
-    if (!fs.existsSync(dir)) return;
-    
-    const files = fs.readdirSync(dir, { withFileTypes: true });
-    
-    await Promise.all(files.map(async file => {
-      const fullPath = path.join(dir, file.name);
+  generateOutput(tokens, filePath) {
+    const moduleName = path.basename(filePath, this.config.fileExtensions.input)
+      .replace(/[^a-zA-Z0-9_]/g, '_');
       
-      if (file.isDirectory()) {
-        await processFiles(fullPath);
-      } else if (file.name.endsWith('.json')) {
-        await FileProcessor.processRegularFile(fullPath);
-      }
-    }));
-  };
+    return `// Generated from ${path.relative(process.cwd(), filePath)}
+// Do not edit directly
 
-  await processFiles();
-  await FileProcessor.processThemeFiles();
-  
-  console.log("✨ Conversion complete!");
+export const ${moduleName} = ${JSON.stringify(tokens, null, 2)};
+`;
+  }
+
+  startWatching() {
+    if (!this.config.watch.enabled) return;
+
+    const watcher = fs.watch(this.config.jsonDir, { recursive: true });
+    let timeout;
+
+    watcher.on('change', (eventType, filename) => {
+      if (timeout) clearTimeout(timeout);
+      
+      timeout = setTimeout(() => {
+        const filePath = path.join(this.config.jsonDir, filename);
+        this.processFile(filePath).catch(console.error);
+      }, this.config.watch.debounceMs);
+    });
+
+    this.watcher = watcher;
+  }
+
+  stopWatching() {
+    if (this.watcher) {
+      this.watcher.close();
+      this.watcher = null;
+    }
+  }
 }
 
-// Start conversion
-convertFiles().catch(console.error);
-console.log("👀 Watching JSON files in:", CONFIG.jsonDir);
+// Main converter class
+class TokenConverter {
+  constructor(userConfig = {}) {
+    this.config = { ...DEFAULT_CONFIG, ...userConfig };
+    this.fileManager = new FileManager(this.config);
+    this.cache = new CacheManager(this.config);
+  }
+
+  async convert() {
+    console.log('Starting token conversion...');
+    
+    try {
+      await this.fileManager.processDirectory();
+      
+      if (this.config.watch.enabled) {
+        console.log('Watching for changes...');
+        this.fileManager.startWatching();
+      }
+      
+      console.log('Token conversion completed successfully!');
+    } catch (error) {
+      console.error('Token conversion failed:', error);
+      throw error;
+    }
+  }
+
+  stop() {
+    this.fileManager.stopWatching();
+    this.cache.saveCache();
+  }
+}
+
+// Export the converter
+export default TokenConverter;
+
+// Example usage:
+const converter = new TokenConverter({
+  jsonDir: './tokens',
+  outputDir: './dist',
+  watch: {
+    enabled: true,
+    debounceMs: 300
+  }
+});
+
+converter.convert().catch(console.error);
