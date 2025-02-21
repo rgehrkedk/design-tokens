@@ -3,47 +3,14 @@ import { existsSync } from 'fs';
 import { join, dirname, relative, basename } from 'path';
 import { fileURLToPath } from 'url';
 
-// Types
-interface TokenValue {
-  value: string | number | Record<string, unknown>;
-  type?: string;
-  description?: string;
-}
-
-interface TokenDefinition {
-  path: string;
-  module: string;
-  isGlobal: boolean;
-  isTheme: boolean;
-  dependencies: Set<string>;
-}
-
-interface ProcessedToken {
-  content: Record<string, unknown>;
-  imports: Set<string>;
-}
-
-interface Config {
-  rootDir: string;
-  outDir: string;
-  extensions: {
-    source: string;
-    output: string;
-  };
-}
-
 // Token Registry for managing definitions and dependencies
 class TokenRegistry {
-  private definitions = new Map<string, TokenDefinition>();
-  private brands = new Set<string>();
+  constructor() {
+    this.definitions = new Map();
+    this.brands = new Set();
+  }
 
-  addDefinition(
-    key: string,
-    path: string,
-    module: string,
-    isGlobal: boolean,
-    isTheme: boolean
-  ): void {
+  addDefinition(key, path, module, isGlobal, isTheme) {
     this.definitions.set(key, {
       path,
       module,
@@ -53,19 +20,19 @@ class TokenRegistry {
     });
   }
 
-  addBrand(brand: string): void {
+  addBrand(brand) {
     this.brands.add(brand);
   }
 
-  getDefinition(key: string): TokenDefinition | undefined {
+  getDefinition(key) {
     return this.definitions.get(key);
   }
 
-  getBrands(): Set<string> {
+  getBrands() {
     return this.brands;
   }
 
-  addDependency(from: string, to: string): void {
+  addDependency(from, to) {
     const def = this.definitions.get(from);
     if (def) {
       def.dependencies.add(to);
@@ -75,26 +42,23 @@ class TokenRegistry {
 
 // Token Processor handles the conversion logic
 class TokenProcessor {
-  private registry: TokenRegistry;
-  private config: Config;
-
-  constructor(config: Config) {
+  constructor(config) {
     this.registry = new TokenRegistry();
     this.config = config;
   }
 
-  private formatModuleName(name: string): string {
+  formatModuleName(name) {
     return name.replace(/[-\.]/g, '_').toLowerCase();
   }
 
-  private async ensureDirectory(path: string): Promise<void> {
+  async ensureDirectory(path) {
     if (!existsSync(dirname(path))) {
       await mkdir(dirname(path), { recursive: true });
     }
   }
 
-  private resolveReferences(content: unknown): Set<string> {
-    const references = new Set<string>();
+  resolveReferences(content) {
+    const references = new Set();
     
     JSON.stringify(content, (_, value) => {
       if (typeof value === 'string' && 
@@ -112,11 +76,8 @@ class TokenProcessor {
     return references;
   }
 
-  private generateImports(
-    references: Set<string>,
-    currentPath: string
-  ): string[] {
-    const imports = new Set<string>();
+  generateImports(references, currentPath) {
+    const imports = new Set();
 
     for (const ref of references) {
       const def = this.registry.getDefinition(ref);
@@ -139,7 +100,7 @@ class TokenProcessor {
     return Array.from(imports);
   }
 
-  private async scanTokens(dir: string = this.config.rootDir): Promise<void> {
+  async scanTokens(dir = this.config.rootDir) {
     const entries = await readdir(dir, { withFileTypes: true });
 
     for (const entry of entries) {
@@ -180,7 +141,7 @@ class TokenProcessor {
     }
   }
 
-  private async loadJson(path: string): Promise<Record<string, unknown> | null> {
+  async loadJson(path) {
     try {
       const content = await readFile(path, 'utf8');
       return JSON.parse(content);
@@ -190,10 +151,7 @@ class TokenProcessor {
     }
   }
 
-  private async processToken(
-    content: Record<string, unknown>,
-    excludeTheme = false
-  ): Promise<ProcessedToken> {
+  async processToken(content, excludeTheme = false) {
     const references = this.resolveReferences(content);
     
     if (excludeTheme) {
@@ -211,11 +169,7 @@ class TokenProcessor {
     };
   }
 
-  private async writeTokenFile(
-    path: string,
-    content: Record<string, unknown>,
-    imports: Set<string>
-  ): Promise<void> {
+  async writeTokenFile(path, content, imports) {
     const moduleName = this.formatModuleName(
       basename(path, this.config.extensions.output)
     );
@@ -243,14 +197,12 @@ class TokenProcessor {
     await writeFile(path, output);
   }
 
-  async convert(): Promise<void> {
+  async convert() {
     console.log('Starting token conversion...');
     
     await this.scanTokens();
 
-    const processDirectory = async (
-      dir: string = this.config.rootDir
-    ): Promise<void> => {
+    const processDirectory = async (dir = this.config.rootDir) => {
       const entries = await readdir(dir, { withFileTypes: true });
 
       for (const entry of entries) {
@@ -307,8 +259,8 @@ class TokenProcessor {
   }
 }
 
-// Configuration and execution
-const config: Config = {
+// Configuration
+const config = {
   rootDir: join(dirname(fileURLToPath(import.meta.url)), 'tokens'),
   outDir: join(dirname(fileURLToPath(import.meta.url)), 'dist'),
   extensions: {
@@ -317,5 +269,6 @@ const config: Config = {
   }
 };
 
+// Run the conversion
 const processor = new TokenProcessor(config);
 processor.convert().catch(console.error);
