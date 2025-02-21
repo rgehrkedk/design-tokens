@@ -25,13 +25,20 @@ class TokenReferenceTracker {
 }
 
 // File Discovery and Processing
-async function discoverTokenFiles() {
-    const rootDir = resolve(process.cwd(), 'json');
+async function discoverTokenFiles(dir = resolve(process.cwd(), 'json')) {
     try {
-        const files = await readdir(rootDir);
-        return files
-            .filter(file => file.endsWith('.json'))
-            .map(file => join(rootDir, file));
+        const entries = await readdir(dir, { withFileTypes: true });
+        const files = await Promise.all(entries.map(async (entry) => {
+            const fullPath = join(dir, entry.name);
+            if (entry.isDirectory()) {
+                return discoverTokenFiles(fullPath);
+            } else if (entry.isFile() && entry.name.endsWith('.json')) {
+                return [fullPath];
+            }
+            return [];
+        }));
+        
+        return files.flat();
     } catch (error) {
         console.error('Error discovering token files:', error);
         return [];
