@@ -298,7 +298,17 @@ class FileManager {
     this.config = config;
     this.watcher = null;
     this.emitter = new EventEmitter();
+    this.ensureDirectories();
   }
+
+  ensureDirectories() {
+    const dirs = [this.config.jsonDir, this.config.outputDir];
+    for (const dir of dirs) {
+      if (!fs.existsSync(dir)) {
+        console.log(`Creating directory: ${dir}`);
+        fs.mkdirSync(dir, { recursive: true });
+      }
+    }
 
   async readFile(filePath) {
     try {
@@ -432,12 +442,43 @@ export default TokenConverter;
 
 // Example usage:
 const converter = new TokenConverter({
-  jsonDir: './tokens',
-  outputDir: './dist',
+  jsonDir: path.resolve(process.cwd(), 'tokens'),
+  outputDir: path.resolve(process.cwd(), 'dist'),
   watch: {
     enabled: true,
     debounceMs: 300
   }
 });
 
-converter.convert().catch(console.error);
+// Add an example token if the tokens directory is empty
+const addExampleToken = () => {
+  const exampleTokenPath = path.join(converter.config.jsonDir, 'example.json');
+  if (!fs.existsSync(exampleTokenPath)) {
+    const exampleToken = {
+      "colors": {
+        "primary": {
+          "value": "#0066CC",
+          "type": "color"
+        },
+        "secondary": {
+          "value": "{colors.primary}",
+          "type": "color"
+        }
+      }
+    };
+    fs.writeFileSync(exampleTokenPath, JSON.stringify(exampleToken, null, 2));
+    console.log(`Created example token file: ${exampleTokenPath}`);
+  }
+};
+
+// Initialize directories and start conversion
+try {
+  addExampleToken();
+  converter.convert().catch(error => {
+    console.error('Conversion failed:', error);
+    process.exit(1);
+  });
+} catch (error) {
+  console.error('Initialization failed:', error);
+  process.exit(1);
+}
