@@ -14,23 +14,19 @@ const DEFAULT_CONFIG = {
   }
 };
 
-// Token registry that handles hierarchical token resolution
 class TokenRegistry {
   constructor() {
-    this.tokens = new Map();
-    this.references = new Map();
-    this.resolvedTokens = new Map();
+    this.globalTokens = new Map();
+    this.brandTokens = new Map();
+    this.themeTokens = new Map();
     this.dependencies = new Map();
-    this.processingStack = new Set(); // For circular reference detection
-    this.fileTokens = new Map(); // Maps files to their tokens
   }
 
-  async buildRegistry(jsonDir) {
-    // Load files in specific order
+  async initialize(jsonDir) {
+    // Load tokens in correct order
     await this.loadGlobalTokens(jsonDir);
     await this.loadBrandTokens(jsonDir);
     await this.loadThemeTokens(jsonDir);
-    this.resolveAllReferences();
   }
 
   async loadGlobalTokens(jsonDir) {
@@ -41,8 +37,8 @@ class TokenRegistry {
         if (file.endsWith('.json')) {
           const filePath = path.join(globalsDir, file);
           const content = JSON.parse(await fs.promises.readFile(filePath, 'utf8'));
-          this.fileTokens.set(filePath, content);
-          this.registerTokens('globals', content, '', filePath);
+          const category = path.basename(file, '.json');
+          this.globalTokens.set(category, { content, filePath });
         }
       }
     }
@@ -54,9 +50,10 @@ class TokenRegistry {
       const files = await fs.promises.readdir(brandDir);
       for (const file of files) {
         if (file.endsWith('.json')) {
-          const content = JSON.parse(await fs.promises.readFile(path.join(brandDir, file), 'utf8'));
+          const filePath = path.join(brandDir, file);
+          const content = JSON.parse(await fs.promises.readFile(filePath, 'utf8'));
           const brandName = path.basename(file, '.json');
-          this.registerTokens(`brand.${brandName}`, content);
+          this.brandTokens.set(brandName, { content, filePath });
         }
       }
     }
@@ -68,135 +65,96 @@ class TokenRegistry {
       const files = await fs.promises.readdir(themeDir);
       for (const file of files) {
         if (file.endsWith('.json')) {
-          const content = JSON.parse(await fs.promises.readFile(path.join(themeDir, file), 'utf8'));
+          const filePath = path.join(themeDir, file);
+          const content = JSON.parse(await fs.promises.readFile(filePath, 'utf8'));
           const themeName = path.basename(file, '.json');
-          this.registerTokens(`theme.${themeName}`, content);
+          this.themeTokens.set(themeName, { content, filePath });
         }
       }
     }
   }
 
-  registerTokens(namespace, tokens, prefix = '', sourceFile = '') {
-    for (const [key, value] of Object.entries(tokens)) {
-      const fullKey = prefix ? `${prefix}.${key}` : key;
-      
+  findReferences(obj, currentPath = []) {
+    const references = new Set();
+    
+    const traverse = (value, path = []) => {
       if (typeof value === 'object' && value !== null) {
-        if (value.value !== undefined) {
-          const tokenKey = `${namespace}.${fullKey}`;
-          this.tokens.set(tokenKey, { ...value, sourceFile });
-          
-          // Store reference if the value is a reference
-          if (typeof value.value === 'string' && value.value.startsWith('{') && value.value.endsWith('}')) {
-            const refKey = value.value.slice(1, -1);
-            this.references.set(tokenKey, refKey);
-            
-            // Track dependencies
-            if (!this.dependencies.has(sourceFile)) {
-              this.dependencies.set(sourceFile, new Set());
-            }
-            this.dependencies.get(sourceFile).add(refKey);
-          }
-        } else {
-          this.registerTokens(namespace, value, fullKey, sourceFile);
+        if (value.value && typeof value.value === 'string' && value.value.startsWith('{') && value.value.endsWith('}')) {
+          const ref = value.value.slice(1, -1);
+          references.add(ref);
+        }
+        for (const [key, val] of Object.entries(value)) {
+          traverse(val, [...path, key]);
         }
       }
-    }
-  }
-
-  resolveAllReferences() {
-    // First pass: resolve global references
-    for (const [tokenKey, reference] of this.references.entries()) {
-      if (reference.startsWith('colors.') || reference.startsWith('numbers.') || reference.startsWith('typography.')) {
-        this.resolveReference(tokenKey, `globals.${reference}`);
-      }
-    }
-
-    // Second pass: resolve brand references
-    for (const [tokenKey, reference] of this.references.entries()) {
-      if (reference.startsWith('colors.brand.')) {
-        const [brand] = tokenKey.split('.');
-        this.resolveReference(tokenKey, `${brand}.${reference}`);
-      }
-    }
-
-    // Third pass: resolve remaining references
-    for (const [tokenKey, reference] of this.references.entries()) {
-      if (!this.resolvedTokens.has(tokenKey)) {
-        this.resolveReference(tokenKey, reference);
-      }
-    }
-  }
-
-  resolveReference(tokenKey, reference, stack = new Set()) {
-    if (stack.has(tokenKey)) {
-      console.error(`Circular reference detected: ${Array.from(stack).join(' -> ')} -> ${tokenKey}`);
-      return this.tokens.get(tokenKey);
-    }
-
-    stack.add(tokenKey);
-
-    const token = this.tokens.get(tokenKey);
-    if (!token) return null;
-
-    let value = token.value;
-    if (typeof value === 'string' && value.startsWith('{') && value.endsWith('}')) {
-      const ref = value.slice(1, -1);
-      const resolvedToken = this.resolveReference(ref, ref, stack);
-      if (resolvedToken) {
-        value = resolvedToken.value;
-        this.resolvedTokens.set(tokenKey, { ...token, value });
-      }
-    }
-
-    stack.delete(tokenKey);
-    return { ...token, value };
-  }
-
-  getResolvedToken(tokenKey) {
-    return this.resolvedTokens.get(tokenKey) || this.tokens.get(tokenKey);
-  }
-}
-
-class TokenProcessor {
-  constructor(registry) {
-    this.registry = registry;
-  }
-
-  processTokens(tokens, namespace) {
-    const processValue = (value) => {
-      if (typeof value !== 'string') return value;
-      
-      if (value.startsWith('{') && value.endsWith('}')) {
-        const reference = value.slice(1, -1);
-        const resolved = this.registry.getResolvedToken(`${namespace}.${reference}`);
-        if (!resolved) {
-          console.warn(`Warning: Unresolved reference "${reference}" in namespace "${namespace}"`);
-          return value;
-        }
-        return resolved.value;
-      }
-      
-      return value;
     };
 
-    const processed = JSON.parse(JSON.stringify(tokens));
-    this.traverseObject(processed, processValue);
-    return processed;
+    traverse(obj);
+    return references;
   }
 
-  traverseObject(obj, processor) {
-    for (const key in obj) {
-      if (Object.prototype.hasOwnProperty.call(obj, key)) {
-        const value = obj[key];
-        if (typeof value === 'object' && value !== null) {
-          if (value.value !== undefined) {
-            obj[key].value = processor(value.value);
-          } else {
-            this.traverseObject(value, processor);
-          }
+  getReferencePath(ref) {
+    const [category, ...rest] = ref.split('.');
+    
+    if (this.globalTokens.has(category)) {
+      return {
+        type: 'global',
+        category,
+        path: rest.join('.')
+      };
+    }
+
+    // Handle brand-specific references
+    if (category === 'colors' && rest[0] === 'brand') {
+      return {
+        type: 'brand',
+        category: 'colors',
+        path: rest.join('.')
+      };
+    }
+
+    return null;
+  }
+
+  resolveDependencies(filePath, content) {
+    const references = this.findReferences(content);
+    const deps = {
+      globals: new Set(),
+      brands: new Set(),
+      themes: new Set()
+    };
+
+    for (const ref of references) {
+      const refPath = this.getReferencePath(ref);
+      if (refPath) {
+        if (refPath.type === 'global') {
+          deps.globals.add(refPath.category);
+        } else if (refPath.type === 'brand') {
+          deps.brands.add(refPath.category);
         }
       }
     }
+
+    this.dependencies.set(filePath, deps);
+    return deps;
+  }
+
+  generateImports(filePath, deps) {
+    const imports = [];
+    const relativePath = (targetPath) => {
+      return path.relative(
+        path.dirname(filePath.replace('json', 'ts')),
+        targetPath
+      ).replace(/\\/g, '/');
+    };
+
+    // Add global imports
+    for (const category of deps.globals) {
+      const importPath = relativePath(path.join(DEFAULT_CONFIG.outputDir, 'globals', category));
+      imports.push(`import { ${category} } from '${importPath.startsWith('.') ? importPath : './' + importPath}';`);
+    }
+
+    return imports.join('\n');
   }
 }
 
@@ -204,32 +162,16 @@ class FileProcessor {
   constructor(config, registry) {
     this.config = config;
     this.registry = registry;
-    this.processor = new TokenProcessor(registry);
-    this.importMap = new Map();
-  }
-
-  addImport(fromFile, toFile, importName) {
-    if (!this.importMap.has(fromFile)) {
-      this.importMap.set(fromFile, new Map());
-    }
-    const fileImports = this.importMap.get(fromFile);
-    if (!fileImports.has(toFile)) {
-      fileImports.set(toFile, new Set());
-    }
-    fileImports.get(toFile).add(importName);
   }
 
   async processFile(filePath) {
     try {
-      const content = await fs.promises.readFile(filePath, 'utf8');
-      const tokens = JSON.parse(content);
+      const content = JSON.parse(await fs.promises.readFile(filePath, 'utf8'));
+      const deps = this.registry.resolveDependencies(filePath, content);
+      const imports = this.registry.generateImports(filePath, deps);
       
-      const relativePath = path.relative(this.config.jsonDir, filePath);
-      const namespace = path.dirname(relativePath) === '.' ? 'globals' : path.dirname(relativePath);
-      
-      const processedTokens = this.processor.processTokens(tokens, namespace);
       const outputPath = this.getOutputPath(filePath);
-      const outputContent = this.generateOutput(processedTokens, filePath);
+      const outputContent = this.generateOutput(content, filePath, imports);
       
       await this.writeOutput(outputPath, outputContent);
     } catch (error) {
@@ -248,38 +190,14 @@ class FileProcessor {
     );
   }
 
-  generateOutput(tokens, filePath) {
+  generateOutput(content, filePath, imports) {
     const moduleName = path.basename(filePath, this.config.fileExtensions.input)
       .replace(/[^a-zA-Z0-9_]/g, '_');
-    
-    // Get dependencies for this file
-    const dependencies = this.registry.dependencies.get(filePath) || new Set();
-    const imports = new Set();
-    
-    // Generate imports
-    for (const dep of dependencies) {
-      const [category, ...rest] = dep.split('.');
-      const importPath = category === 'colors' ? 'globals/colors' :
-                        category === 'numbers' ? 'globals/numbers' :
-                        category === 'typography' ? 'globals/typography' :
-                        null;
-      
-      if (importPath) {
-        const relativePath = path.relative(
-          path.dirname(this.getOutputPath(filePath)),
-          path.join(this.config.outputDir, importPath)
-        ).replace(/\\/g, '/');
-        
-        imports.add(`import { ${category} } from '${relativePath.startsWith('.') ? relativePath : './' + relativePath}';`);
-      }
-    }
-    
-    const importStatements = Array.from(imports).join('\n');
     
     return `// Generated from ${path.relative(process.cwd(), filePath)}
 // Do not edit directly
 
-${importStatements ? importStatements + '\n\n' : ''}export const ${moduleName} = ${JSON.stringify(tokens, null, 2)};
+${imports ? imports + '\n\n' : ''}export const ${moduleName} = ${JSON.stringify(content, null, 2)};
 `;
   }
 
@@ -302,32 +220,27 @@ class TokenConverter {
 
   async convert() {
     console.log('Building token registry...');
-    await this.registry.buildRegistry(this.config.jsonDir);
+    await this.registry.initialize(this.config.jsonDir);
     
     console.log('Processing token files...');
     const fileProcessor = new FileProcessor(this.config, this.registry);
     
-    const processDirectory = async (dir) => {
-      const entries = await fs.promises.readdir(dir, { withFileTypes: true });
-      
-      for (const entry of entries) {
-        const fullPath = path.join(dir, entry.name);
-        
-        if (entry.isDirectory()) {
-          await processDirectory(fullPath);
-        } else if (entry.isFile() && entry.name.endsWith(this.config.fileExtensions.input)) {
-          await fileProcessor.processFile(fullPath);
-        }
-      }
-    };
-    
-    try {
-      await processDirectory(this.config.jsonDir);
-      console.log('Conversion completed successfully!');
-    } catch (error) {
-      console.error('Conversion failed:', error);
-      throw error;
+    // Process global tokens
+    for (const [category, { filePath }] of this.registry.globalTokens) {
+      await fileProcessor.processFile(filePath);
     }
+
+    // Process brand tokens
+    for (const [brand, { filePath }] of this.registry.brandTokens) {
+      await fileProcessor.processFile(filePath);
+    }
+
+    // Process theme tokens
+    for (const [theme, { filePath }] of this.registry.themeTokens) {
+      await fileProcessor.processFile(filePath);
+    }
+    
+    console.log('Conversion completed successfully!');
   }
 }
 
