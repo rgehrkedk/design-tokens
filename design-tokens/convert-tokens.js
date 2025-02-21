@@ -18,15 +18,12 @@ class TokenRegistry {
   constructor() {
     this.globalTokens = new Map();
     this.brandTokens = new Map();
-    this.themeTokens = new Map();
     this.dependencies = new Map();
   }
 
   async initialize(jsonDir) {
-    // Load tokens in correct order
     await this.loadGlobalTokens(jsonDir);
     await this.loadBrandTokens(jsonDir);
-    await this.loadThemeTokens(jsonDir);
   }
 
   async loadGlobalTokens(jsonDir) {
@@ -37,8 +34,7 @@ class TokenRegistry {
         if (file.endsWith('.json')) {
           const filePath = path.join(globalsDir, file);
           const content = JSON.parse(await fs.promises.readFile(filePath, 'utf8'));
-          const category = path.basename(file, '.json');
-          this.globalTokens.set(category, { content, filePath });
+          this.globalTokens.set('base', { content, filePath });
         }
       }
     }
@@ -50,42 +46,56 @@ class TokenRegistry {
       const files = await fs.promises.readdir(brandDir);
       for (const file of files) {
         if (file.endsWith('.json')) {
-          const filePath = path.join(brandDir, file);
-          const content = JSON.parse(await fs.promises.readFile(filePath, 'utf8'));
           const brandName = path.basename(file, '.json');
-          this.brandTokens.set(brandName, { content, filePath });
+          const brandData = {
+            base: await this.loadBrandBase(brandName, jsonDir),
+            light: await this.loadBrandTheme(brandName, 'light', jsonDir),
+            dark: await this.loadBrandTheme(brandName, 'dark', jsonDir),
+            components: await this.loadBrandComponents(brandName, jsonDir)
+          };
+          this.brandTokens.set(brandName, brandData);
         }
       }
     }
   }
 
-  async loadThemeTokens(jsonDir) {
-    const themeDir = path.join(jsonDir, 'theme');
-    if (fs.existsSync(themeDir)) {
-      const files = await fs.promises.readdir(themeDir);
-      for (const file of files) {
-        if (file.endsWith('.json')) {
-          const filePath = path.join(themeDir, file);
-          const content = JSON.parse(await fs.promises.readFile(filePath, 'utf8'));
-          const themeName = path.basename(file, '.json');
-          this.themeTokens.set(themeName, { content, filePath });
-        }
-      }
-    }
+  async loadBrandBase(brand, jsonDir) {
+    const filePath = path.join(jsonDir, 'brand', `${brand}.json`);
+    return {
+      content: JSON.parse(await fs.promises.readFile(filePath, 'utf8')),
+      filePath
+    };
   }
 
-  findReferences(obj, currentPath = []) {
+  async loadBrandTheme(brand, theme, jsonDir) {
+    const filePath = path.join(jsonDir, 'theme', `${theme}.json`);
+    if (fs.existsSync(filePath)) {
+      return {
+        content: JSON.parse(await fs.promises.readFile(filePath, 'utf8')),
+        filePath
+      };
+    }
+    return null;
+  }
+
+  async loadBrandComponents(brand, jsonDir) {
+    const base = await this.loadBrandBase(brand, jsonDir);
+    return base.content.components ? {
+      content: base.content.components,
+      filePath: base.filePath
+    } : null;
+  }
+
+  findReferences(obj) {
     const references = new Set();
     
-    const traverse = (value, path = []) => {
+    const traverse = (value) => {
       if (typeof value === 'object' && value !== null) {
         if (value.value && typeof value.value === 'string' && value.value.startsWith('{') && value.value.endsWith('}')) {
           const ref = value.value.slice(1, -1);
           references.add(ref);
         }
-        for (const [key, val] of Object.entries(value)) {
-          traverse(val, [...path, key]);
-        }
+        Object.values(value).forEach(traverse);
       }
     };
 
@@ -93,121 +103,150 @@ class TokenRegistry {
     return references;
   }
 
-  getReferencePath(ref) {
-    const [category, ...rest] = ref.split('.');
-    
-    if (this.globalTokens.has(category)) {
-      return {
-        type: 'global',
-        category,
-        path: rest.join('.')
-      };
-    }
-
-    // Handle brand-specific references
-    if (category === 'colors' && rest[0] === 'brand') {
-      return {
-        type: 'brand',
-        category: 'colors',
-        path: rest.join('.')
-      };
-    }
-
-    return null;
-  }
-
-  resolveDependencies(filePath, content) {
-    const references = this.findReferences(content);
-    const deps = {
-      globals: new Set(),
-      brands: new Set(),
-      themes: new Set()
-    };
-
-    for (const ref of references) {
-      const refPath = this.getReferencePath(ref);
-      if (refPath) {
-        if (refPath.type === 'global') {
-          deps.globals.add(refPath.category);
-        } else if (refPath.type === 'brand') {
-          deps.brands.add(refPath.category);
-        }
-      }
-    }
-
-    this.dependencies.set(filePath, deps);
-    return deps;
-  }
-
-  generateImports(filePath, deps) {
-    const imports = [];
+  generateImports(references, currentPath) {
+    const imports = new Set();
     const relativePath = (targetPath) => {
       return path.relative(
-        path.dirname(filePath.replace('json', 'ts')),
+        path.dirname(currentPath),
         targetPath
       ).replace(/\\/g, '/');
     };
 
     // Add global imports
-    for (const category of deps.globals) {
-      const importPath = relativePath(path.join(DEFAULT_CONFIG.outputDir, 'globals', category));
-      imports.push(`import { ${category} } from '${importPath.startsWith('.') ? importPath : './' + importPath}';`);
-    }
+    imports.add(`import { globalTokens } from '${relativePath(path.join(this.config.outputDir, 'global', 'index'))}';`);
 
-    return imports.join('\n');
+    return Array.from(imports).join('\n');
   }
 }
 
-class FileProcessor {
+class FileGenerator {
   constructor(config, registry) {
     this.config = config;
     this.registry = registry;
   }
 
-  async processFile(filePath) {
-    try {
-      const content = JSON.parse(await fs.promises.readFile(filePath, 'utf8'));
-      const deps = this.registry.resolveDependencies(filePath, content);
-      const imports = this.registry.generateImports(filePath, deps);
+  async generateFiles() {
+    await this.generateGlobalFiles();
+    await this.generateBrandFiles();
+    await this.generateMainIndex();
+    await this.generateUtils();
+  }
+
+  async generateGlobalFiles() {
+    // Generate global/index.ts
+    const globalIndexPath = path.join(this.config.outputDir, 'global', 'index.ts');
+    const globalContent = `
+import baseTokens from './baseTokens.json';
+
+export const globalTokens = baseTokens;
+`;
+    await this.writeFile(globalIndexPath, globalContent);
+
+    // Generate global tokens file
+    const globalTokensPath = path.join(this.config.outputDir, 'global', 'baseTokens.json');
+    await this.writeFile(globalTokensPath, JSON.stringify(this.registry.globalTokens.get('base').content, null, 2));
+  }
+
+  async generateBrandFiles() {
+    for (const [brand, data] of this.registry.brandTokens) {
+      const brandDir = path.join(this.config.outputDir, 'brands', brand);
       
-      const outputPath = this.getOutputPath(filePath);
-      const outputContent = this.generateOutput(content, filePath, imports);
-      
-      await this.writeOutput(outputPath, outputContent);
-    } catch (error) {
-      console.error(`Error processing ${filePath}:`, error);
+      // Generate brand base tokens
+      await this.writeFile(
+        path.join(brandDir, 'baseTokens.json'),
+        JSON.stringify(data.base.content, null, 2)
+      );
+
+      // Generate theme files
+      if (data.light) {
+        await this.writeFile(
+          path.join(brandDir, 'light.json'),
+          JSON.stringify(data.light.content, null, 2)
+        );
+      }
+      if (data.dark) {
+        await this.writeFile(
+          path.join(brandDir, 'dark.json'),
+          JSON.stringify(data.dark.content, null, 2)
+        );
+      }
+
+      // Generate components file if exists
+      if (data.components) {
+        await this.writeFile(
+          path.join(brandDir, 'components.json'),
+          JSON.stringify(data.components.content, null, 2)
+        );
+      }
+
+      // Generate brand index.ts
+      const brandIndexContent = `
+import baseTokens from './baseTokens.json';
+import lightMode from './light.json';
+import darkMode from './dark.json';
+import componentTokens from './components.json';
+
+export const ${brand}Tokens = {
+  base: baseTokens,
+  themes: {
+    light: lightMode,
+    dark: darkMode,
+  },
+  components: componentTokens
+};
+`;
+      await this.writeFile(path.join(brandDir, 'index.ts'), brandIndexContent);
     }
   }
 
-  getOutputPath(filePath) {
-    const relativePath = path.relative(this.config.jsonDir, filePath);
-    return path.join(
-      this.config.outputDir,
-      relativePath.replace(
-        this.config.fileExtensions.input,
-        this.config.fileExtensions.output
-      )
-    );
-  }
+  async generateMainIndex() {
+    const imports = Array.from(this.registry.brandTokens.keys())
+      .map(brand => `import { ${brand}Tokens } from './brands/${brand}';`)
+      .join('\n');
 
-  generateOutput(content, filePath, imports) {
-    const moduleName = path.basename(filePath, this.config.fileExtensions.input)
-      .replace(/[^a-zA-Z0-9_]/g, '_');
-    
-    return `// Generated from ${path.relative(process.cwd(), filePath)}
-// Do not edit directly
+    const brandMap = Array.from(this.registry.brandTokens.keys())
+      .map(brand => `  ${brand}: ${brand}Tokens,`)
+      .join('\n');
 
-${imports ? imports + '\n\n' : ''}export const ${moduleName} = ${JSON.stringify(content, null, 2)};
+    const content = `
+import { globalTokens } from './global';
+${imports}
+
+const brandMap: Record<string, any> = {
+${brandMap}
+};
+
+export const getTokens = (brand: string, mode: 'light' | 'dark') => {
+  const brandTokens = brandMap[brand] || {};
+  return {
+    ...globalTokens, 
+    ...brandTokens.base,
+    ...brandTokens.themes[mode],
+    components: brandTokens.components
+  };
+};
 `;
+    await this.writeFile(path.join(this.config.outputDir, 'index.ts'), content);
   }
 
-  async writeOutput(outputPath, content) {
+  async generateUtils() {
+    const resolverContent = `
+import { getTokens } from '../tokens';
+
+export const resolveTheme = (brand: string, mode: 'light' | 'dark') => {
+  return getTokens(brand, mode);
+};
+`;
+    await this.writeFile(path.join(this.config.outputDir, '..', 'utils', 'themeResolver.ts'), resolverContent);
+  }
+
+  async writeFile(filePath, content) {
     try {
-      await fs.promises.mkdir(path.dirname(outputPath), { recursive: true });
-      await fs.promises.writeFile(outputPath, content, 'utf8');
-      console.log(`Created: ${outputPath}`);
+      await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.promises.writeFile(filePath, content, 'utf8');
+      console.log(`Created: ${filePath}`);
     } catch (error) {
-      console.error(`Error writing ${outputPath}:`, error);
+      console.error(`Error writing ${filePath}:`, error);
     }
   }
 }
@@ -222,23 +261,9 @@ class TokenConverter {
     console.log('Building token registry...');
     await this.registry.initialize(this.config.jsonDir);
     
-    console.log('Processing token files...');
-    const fileProcessor = new FileProcessor(this.config, this.registry);
-    
-    // Process global tokens
-    for (const [category, { filePath }] of this.registry.globalTokens) {
-      await fileProcessor.processFile(filePath);
-    }
-
-    // Process brand tokens
-    for (const [brand, { filePath }] of this.registry.brandTokens) {
-      await fileProcessor.processFile(filePath);
-    }
-
-    // Process theme tokens
-    for (const [theme, { filePath }] of this.registry.themeTokens) {
-      await fileProcessor.processFile(filePath);
-    }
+    console.log('Generating TypeScript files...');
+    const generator = new FileGenerator(this.config, this.registry);
+    await generator.generateFiles();
     
     console.log('Conversion completed successfully!');
   }
