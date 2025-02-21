@@ -1,210 +1,321 @@
-// src/convert-tokens.ts
-import { readdir, readFile, writeFile } from 'fs/promises';
-import { join, resolve } from 'path';
+import { readFile, readdir, writeFile, mkdir } from 'fs/promises';
+import { existsSync } from 'fs';
+import { join, dirname, relative, basename } from 'path';
 import { fileURLToPath } from 'url';
 
-// Get the directory name in ESM
-const __dirname = fileURLToPath(new URL('.', import.meta.url));
-
 // Types
-type TokenValue = string | number | Record<string, unknown>;
-
-interface DesignToken {
-    value: TokenValue;
-    type?: string;
-    description?: string;
+interface TokenValue {
+  value: string | number | Record<string, unknown>;
+  type?: string;
+  description?: string;
 }
 
-interface TokenMap {
-    [key: string]: DesignToken | TokenMap;
+interface TokenDefinition {
+  path: string;
+  module: string;
+  isGlobal: boolean;
+  isTheme: boolean;
+  dependencies: Set<string>;
 }
 
-interface TokenFile {
-    path: string;
-    content: TokenMap;
+interface ProcessedToken {
+  content: Record<string, unknown>;
+  imports: Set<string>;
 }
 
-// Token reference tracking
-class TokenReferenceTracker {
-    private referenceMap = new Map<string, Set<string>>();
+interface Config {
+  rootDir: string;
+  outDir: string;
+  extensions: {
+    source: string;
+    output: string;
+  };
+}
 
-    addReference(token: string, referencedBy: string): void {
-        if (!this.referenceMap.has(token)) {
-            this.referenceMap.set(token, new Set());
+// Token Registry for managing definitions and dependencies
+class TokenRegistry {
+  private definitions = new Map<string, TokenDefinition>();
+  private brands = new Set<string>();
+
+  addDefinition(
+    key: string,
+    path: string,
+    module: string,
+    isGlobal: boolean,
+    isTheme: boolean
+  ): void {
+    this.definitions.set(key, {
+      path,
+      module,
+      isGlobal,
+      isTheme,
+      dependencies: new Set()
+    });
+  }
+
+  addBrand(brand: string): void {
+    this.brands.add(brand);
+  }
+
+  getDefinition(key: string): TokenDefinition | undefined {
+    return this.definitions.get(key);
+  }
+
+  getBrands(): Set<string> {
+    return this.brands;
+  }
+
+  addDependency(from: string, to: string): void {
+    const def = this.definitions.get(from);
+    if (def) {
+      def.dependencies.add(to);
+    }
+  }
+}
+
+// Token Processor handles the conversion logic
+class TokenProcessor {
+  private registry: TokenRegistry;
+  private config: Config;
+
+  constructor(config: Config) {
+    this.registry = new TokenRegistry();
+    this.config = config;
+  }
+
+  private formatModuleName(name: string): string {
+    return name.replace(/[-\.]/g, '_').toLowerCase();
+  }
+
+  private async ensureDirectory(path: string): Promise<void> {
+    if (!existsSync(dirname(path))) {
+      await mkdir(dirname(path), { recursive: true });
+    }
+  }
+
+  private resolveReferences(content: unknown): Set<string> {
+    const references = new Set<string>();
+    
+    JSON.stringify(content, (_, value) => {
+      if (typeof value === 'string' && 
+          value.startsWith('{') && 
+          value.endsWith('}')) {
+        const token = value.slice(1, -1).split('.')[0];
+        const def = this.registry.getDefinition(token);
+        if (def) {
+          references.add(token);
         }
-        this.referenceMap.get(token)!.add(referencedBy);
+      }
+      return value;
+    });
+
+    return references;
+  }
+
+  private generateImports(
+    references: Set<string>,
+    currentPath: string
+  ): string[] {
+    const imports = new Set<string>();
+
+    for (const ref of references) {
+      const def = this.registry.getDefinition(ref);
+      if (!def) continue;
+
+      const relativePath = relative(
+        dirname(currentPath),
+        join(this.config.outDir, def.path)
+      );
+
+      const importPath = relativePath.startsWith('.') 
+        ? relativePath 
+        : './' + relativePath;
+
+      imports.add(
+        `import { ${def.module} } from '${importPath}/${def.module}';`
+      );
     }
 
-    getReferences(token: string): Set<string> {
-        return this.referenceMap.get(token) || new Set();
-    }
-}
+    return Array.from(imports);
+  }
 
-// File Discovery and Processing
-async function discoverTokenFiles(): Promise<string[]> {
-    const rootDir = resolve(__dirname, '..', 'json');
+  private async scanTokens(dir: string = this.config.rootDir): Promise<void> {
+    const entries = await readdir(dir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const fullPath = join(dir, entry.name);
+      const relativePath = relative(this.config.rootDir, dir);
+
+      if (entry.isDirectory()) {
+        await this.scanTokens(fullPath);
+        continue;
+      }
+
+      if (!entry.name.endsWith(this.config.extensions.source)) continue;
+
+      // Handle brand files
+      if (relativePath === 'brand') {
+        this.registry.addBrand(
+          basename(entry.name, this.config.extensions.source)
+        );
+      }
+
+      const content = await this.loadJson(fullPath);
+      if (!content) continue;
+
+      const moduleName = this.formatModuleName(entry.name);
+      
+      // Register token definitions
+      Object.keys(content)
+        .filter(key => !(relativePath === 'brand' && key === 'components'))
+        .forEach(key => {
+          this.registry.addDefinition(
+            key,
+            relativePath,
+            moduleName,
+            relativePath.startsWith('globals'),
+            relativePath === 'theme'
+          );
+        });
+    }
+  }
+
+  private async loadJson(path: string): Promise<Record<string, unknown> | null> {
     try {
-        const files = await readdir(rootDir);
-        return files
-            .filter(file => file.endsWith('.json'))
-            .map(file => join(rootDir, file));
+      const content = await readFile(path, 'utf8');
+      return JSON.parse(content);
     } catch (error) {
-        console.error('Error discovering token files:', error);
-        return [];
+      console.error(`Error loading ${path}:`, error);
+      return null;
     }
-}
+  }
 
-async function loadTokenFile(path: string): Promise<TokenFile | null> {
-    try {
-        const content = await readFile(path, 'utf-8');
-        return {
-            path,
-            content: JSON.parse(content) as TokenMap
-        };
-    } catch (error) {
-        console.error(`Error loading token file ${path}:`, error);
-        return null;
-    }
-}
-
-// Token Processing
-function processTokens(tokens: TokenMap): Map<string, TokenValue> {
-    const flattenedTokens = new Map<string, TokenValue>();
+  private async processToken(
+    content: Record<string, unknown>,
+    excludeTheme = false
+  ): Promise<ProcessedToken> {
+    const references = this.resolveReferences(content);
     
-    function flatten(obj: TokenMap, path: string = '') {
-        for (const [key, value] of Object.entries(obj)) {
-            const currentPath = path ? `${path}.${key}` : key;
-            
-            if (isDesignToken(value)) {
-                flattenedTokens.set(currentPath, value.value);
-            } else {
-                flatten(value, currentPath);
-            }
+    if (excludeTheme) {
+      for (const ref of references) {
+        const def = this.registry.getDefinition(ref);
+        if (def?.isTheme) {
+          references.delete(ref);
         }
+      }
     }
-    
-    flatten(tokens);
-    return flattenedTokens;
-}
 
-function resolveReferences(
-    tokens: Map<string, TokenValue>,
-    tracker: TokenReferenceTracker
-): Map<string, TokenValue> {
-    const resolved = new Map<string, TokenValue>();
+    return {
+      content,
+      imports: references
+    };
+  }
+
+  private async writeTokenFile(
+    path: string,
+    content: Record<string, unknown>,
+    imports: Set<string>
+  ): Promise<void> {
+    const moduleName = this.formatModuleName(
+      basename(path, this.config.extensions.output)
+    );
+
+    const importStatements = this.generateImports(imports, path).join('\n');
+    const formattedContent = JSON.stringify(content, null, 2)
+      .replace(/"([^"]+)":/g, (_, key) => 
+        key.includes('-') ? `'${key}':` : `${key}:`)
+      .replace(/"\{([^}]+)\}"/g, (_, ref) => {
+        const parts = ref.split('.');
+        const def = this.registry.getDefinition(parts[0]);
+        
+        if (!def) return `{${ref}}`;
+
+        return parts.length === 2
+          ? `${def.module}.${parts[0]}['${parts[1]}']`
+          : `${def.module}.${parts[0]}.${parts[1]}${
+              parts.slice(2).map(p => `['${p}']`).join('')
+            }`;
+      });
+
+    const output = `${importStatements}\n\nexport const ${moduleName} = ${formattedContent};\n`;
+
+    await this.ensureDirectory(path);
+    await writeFile(path, output);
+  }
+
+  async convert(): Promise<void> {
+    console.log('Starting token conversion...');
     
-    for (const [path, value] of tokens) {
-        if (typeof value === 'string' && isTokenReference(value)) {
-            const refPath = value.slice(1, -1); // Remove {} braces
-            const resolvedValue = tokens.get(refPath);
-            if (resolvedValue !== undefined) {
-                resolved.set(path, resolvedValue);
-                tracker.addReference(refPath, path);
-            } else {
-                console.warn(`Unresolved reference: ${value} in ${path}`);
-                resolved.set(path, value);
-            }
-        } else {
-            resolved.set(path, value);
+    await this.scanTokens();
+
+    const processDirectory = async (
+      dir: string = this.config.rootDir
+    ): Promise<void> => {
+      const entries = await readdir(dir, { withFileTypes: true });
+
+      for (const entry of entries) {
+        const sourcePath = join(dir, entry.name);
+        
+        if (entry.isDirectory()) {
+          await processDirectory(sourcePath);
+          continue;
         }
-    }
-    
-    return resolved;
-}
 
-// TypeScript Generation
-function generateTypeScript(
-    tokens: Map<string, TokenValue>,
-    tracker: TokenReferenceTracker
-): string {
-    const output: string[] = [];
-    
-    // Add type definitions
-    output.push('// Generated by Design Token Converter');
-    output.push('// Do not edit directly');
-    output.push('');
-    output.push('export interface DesignToken<T> {');
-    output.push('  value: T;');
-    output.push('  type?: string;');
-    output.push('  description?: string;');
-    output.push('}');
-    output.push('');
-    
-    // Generate token structure
-    output.push('export const tokens = {');
-    
-    const tokenPaths = Array.from(tokens.keys()).sort();
-    for (const path of tokenPaths) {
-        const value = tokens.get(path)!;
-        const pathParts = path.split('.');
-        const indentation = '  '.repeat(pathParts.length);
-        
-        output.push(`${indentation}${formatPropertyName(pathParts.at(-1)!)}: {`);
-        output.push(`${indentation}  value: ${JSON.stringify(value)},`);
-        output.push(`${indentation}} as const,`);
-    }
-    
-    output.push('} as const;');
-    output.push('');
-    
-    // Generate types
-    output.push('export type TokenTypes = typeof tokens;');
-    
-    return output.join('\n');
-}
+        if (!entry.name.endsWith(this.config.extensions.source)) continue;
 
-// Helper functions
-function isDesignToken(value: unknown): value is DesignToken {
-    return typeof value === 'object' && value !== null && 'value' in value;
-}
+        const content = await this.loadJson(sourcePath);
+        if (!content) continue;
 
-function isTokenReference(value: string): boolean {
-    return value.startsWith('{') && value.endsWith('}');
-}
+        const relativePath = relative(this.config.rootDir, dir);
+        const outputPath = join(
+          this.config.outDir,
+          relativePath,
+          entry.name.replace(
+            this.config.extensions.source,
+            this.config.extensions.output
+          )
+        );
 
-function formatPropertyName(name: string): string {
-    return name.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
-}
-
-// Main conversion function
-async function convertDesignTokens(): Promise<void> {
-    try {
-        // Discover all JSON files
-        const files = await discoverTokenFiles();
-        if (files.length === 0) {
-            throw new Error('No token files found in /json directory');
+        // Process theme files
+        if (relativePath === 'theme') {
+          for (const brand of this.registry.getBrands()) {
+            const processed = await this.processToken(content, true);
+            await this.writeTokenFile(
+              outputPath.replace(
+                this.config.extensions.output,
+                `_${brand}${this.config.extensions.output}`
+              ),
+              processed.content,
+              processed.imports
+            );
+          }
+          continue;
         }
-        
-        // Load and process all token files
-        const tracker = new TokenReferenceTracker();
-        const allTokens = new Map<string, TokenValue>();
-        
-        for (const file of files) {
-            const tokenFile = await loadTokenFile(file);
-            if (tokenFile) {
-                const tokens = processTokens(tokenFile.content);
-                for (const [path, value] of tokens) {
-                    allTokens.set(path, value);
-                }
-            }
-        }
-        
-        // Resolve references
-        const resolvedTokens = resolveReferences(allTokens, tracker);
-        
-        // Generate TypeScript
-        const typescript = generateTypeScript(resolvedTokens, tracker);
-        
-        // Write output
-        const outputPath = resolve(__dirname, '..', 'dist', 'tokens.ts');
-        await writeFile(outputPath, typescript);
-        console.log('Successfully converted design tokens to TypeScript');
-        
-    } catch (error) {
-        console.error('Error converting design tokens:', error);
-        process.exit(1);
-    }
+
+        // Process regular files
+        const processed = await this.processToken(content);
+        await this.writeTokenFile(
+          outputPath,
+          processed.content,
+          processed.imports
+        );
+      }
+    };
+
+    await processDirectory();
+    console.log('Token conversion complete!');
+  }
 }
 
-// Run the conversion
-convertDesignTokens();
+// Configuration and execution
+const config: Config = {
+  rootDir: join(dirname(fileURLToPath(import.meta.url)), 'tokens'),
+  outDir: join(dirname(fileURLToPath(import.meta.url)), 'dist'),
+  extensions: {
+    source: '.json',
+    output: '.ts'
+  }
+};
+
+const processor = new TokenProcessor(config);
+processor.convert().catch(console.error);
