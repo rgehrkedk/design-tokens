@@ -123,13 +123,13 @@ function getStyleDictionaryConfig(mode1, mode2) {
   console.log("Collection modes:", collectionModes); // Add this debug line
   
   // Check if collections exist
-  if (!collectionModes || !collectionModes.tokens) {
+  if (!collectionModes || !collectionModes.brand) {
     console.error("❗️No token collections found");
     return;
   }
 
-  const tokensCollectionModes = collectionModes.tokens || [];
-  const primitivesCollectionModes = collectionModes.primitives || [];
+  const tokensCollectionModes = collectionModes.brand || [];
+  const primitivesCollectionModes = collectionModes.theme || [];
   const platforms = ["web", "ios"];
 
   console.log("\n🚀 Build started...");
