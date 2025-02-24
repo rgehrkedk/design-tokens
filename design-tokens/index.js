@@ -87,8 +87,8 @@ function getStyleDictionaryConfig(themeMode, brandMode) {
         buildPath: `build/web/${buildDir}/`,
         files: [
           {
-            destination: "tokens.css",
-            format: "css/variables",
+            destination: "tokens.json",
+            format: "json",
           },
         ],
       },
