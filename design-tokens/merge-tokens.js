@@ -3,10 +3,42 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const StyleDictionary = require('style-dictionary');
-const { transformers } = require('@tokens-studio/sd-transforms');
 
-// Register all the @tokens-studio/sd-transforms transformers with Style Dictionary
-transformers.registerTransforms(StyleDictionary);
+// Load the sd-transforms package - try different import methods
+let sdTransforms;
+try {
+  // Try the main import first
+  sdTransforms = require('@tokens-studio/sd-transforms');
+  console.log('SD Transforms imported successfully');
+  
+  // Check for registration function
+  if (typeof sdTransforms.registerTransforms === 'function') {
+    sdTransforms.registerTransforms(StyleDictionary);
+    console.log('Registered transforms with registerTransforms()');
+  } else if (sdTransforms.transformers && typeof sdTransforms.transformers.registerTransforms === 'function') {
+    sdTransforms.transformers.registerTransforms(StyleDictionary);
+    console.log('Registered transforms with transformers.registerTransforms()');
+  } else {
+    console.log('Could not find registerTransforms function. Looking for alternative API...');
+    
+    // Check if the package exports transforms directly
+    if (Array.isArray(sdTransforms.transforms)) {
+      // Register each transform individually
+      sdTransforms.transforms.forEach(transform => {
+        if (transform.name && transform.transformer) {
+          StyleDictionary.registerTransform(transform);
+          console.log(`Registered transform: ${transform.name}`);
+        }
+      });
+    } else {
+      console.log('No transforms array found. Using manual HSL conversion.');
+    }
+  }
+} catch (error) {
+  console.warn('Error importing sd-transforms:', error.message);
+  console.log('Will use manual color conversion instead');
+  sdTransforms = null;
+}
 
 // Base URL to fetch list of token URLs - this should be the only thing that needs to change
 const STYLE_DICTIONARY_LINKS_URL = 'https://e-boks.zeroheight.com/api/token_management/token_set/10617/style_dictionary_links';
