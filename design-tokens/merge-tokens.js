@@ -4,49 +4,94 @@ const path = require('path');
 const axios = require('axios');
 const sdTransforms = require('@tokens-studio/sd-transforms');
 
-// URLs to fetch
-const urls = [
-  'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22009&mode_id=38483&collection_name=brand&mode_name=eboks',
-  'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22009&mode_id=38484&collection_name=brand&mode_name=postnl',
-  'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22009&mode_id=38485&collection_name=brand&mode_name=nykredit',
-  'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22010&mode_id=38486&collection_name=theme&mode_name=light',
-  'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22010&mode_id=38487&collection_name=theme&mode_name=dark',
-  'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22011&mode_id=38488&collection_name=globals&mode_name=value'
-];
+// Base URL to fetch list of token URLs
+const STYLE_DICTIONARY_LINKS_URL = 'https://e-boks.zeroheight.com/api/token_management/token_set/10617/style_dictionary_links';
 
-// Function to fetch and transform each token set
-async function fetchTokens(url) {
+// Function to fetch the list of token URLs
+async function fetchTokenUrls() {
   try {
-    console.log(`Attempting to fetch from: ${url}`);
-    const response = await axios.get(url);
-    // Extract the collection and mode from the URL for naming
-    const urlParams = new URL(url).searchParams;
-    const collection = urlParams.get('collection_name');
-    const mode = urlParams.get('mode_name');
+    console.log(`Fetching token URLs from: ${STYLE_DICTIONARY_LINKS_URL}`);
+    const response = await axios.get(STYLE_DICTIONARY_LINKS_URL);
     
-    console.log(`Successfully fetched ${collection}/${mode} tokens`);
-    console.log(`Data sample: ${JSON.stringify(response.data).substring(0, 100)}...`);
+    // The response should contain the list of token URLs
+    if (Array.isArray(response.data)) {
+      console.log(`Found ${response.data.length} token URLs`);
+      return response.data;
+    } else if (typeof response.data === 'string') {
+      // In case the response is a JSON string
+      try {
+        const parsedData = JSON.parse(response.data);
+        if (Array.isArray(parsedData)) {
+          console.log(`Found ${parsedData.length} token URLs`);
+          return parsedData;
+        }
+      } catch (e) {
+        console.error('Failed to parse JSON response:', e.message);
+      }
+    }
     
-    // Return the data with metadata
-    return {
-      data: response.data,
-      collection,
-      mode
-    };
+    // If the structure is different, try to extract URLs from it
+    console.log('Response structure:', typeof response.data);
+    if (typeof response.data === 'object' && response.data !== null) {
+      // Print a small sample of the response for debugging
+      console.log('Response sample:', JSON.stringify(response.data).substring(0, 200) + '...');
+      
+      // Try to extract URLs from the response
+      const extractedUrls = extractUrlsFromResponse(response.data);
+      if (extractedUrls.length > 0) {
+        console.log(`Extracted ${extractedUrls.length} URLs from response`);
+        return extractedUrls;
+      }
+    }
+    
+    throw new Error('Could not extract token URLs from the response');
   } catch (error) {
-    console.error(`Error fetching from ${url}:`, error.message);
-    console.error(`Full error: ${error.stack}`);
-    return null;
+    console.error(`Error fetching token URLs: ${error.message}`);
+    throw error;
   }
+}
+
+// Function to extract URLs from different response structures
+function extractUrlsFromResponse(data) {
+  const urls = [];
+  
+  // Check if it's directly an array of strings
+  if (Array.isArray(data)) {
+    const stringUrls = data.filter(item => typeof item === 'string' && item.includes('format=style-dictionary'));
+    if (stringUrls.length > 0) {
+      return stringUrls;
+    }
+  }
+  
+  // Try to find URLs in the object (recursively search for strings that look like URLs)
+  function findUrlsInObject(obj, path = '') {
+    if (typeof obj === 'string' && obj.includes('format=style-dictionary')) {
+      urls.push(obj);
+    } else if (typeof obj === 'object' && obj !== null) {
+      for (const key in obj) {
+        findUrlsInObject(obj[key], `${path}.${key}`);
+      }
+    }
+  }
+  
+  findUrlsInObject(data);
+  return urls;
 }
 
 // Main function to fetch all tokens, apply transforms and merge them
 async function mergeAllTokens() {
   try {
+    // First, fetch the list of token URLs
+    const tokenUrls = await fetchTokenUrls();
+    
+    if (!tokenUrls || tokenUrls.length === 0) {
+      throw new Error('No token URLs found');
+    }
+    
     console.log('Starting to fetch token sets...');
     
     // Fetch all token sets
-    const tokenSets = await Promise.all(urls.map(fetchTokens));
+    const tokenSets = await Promise.all(tokenUrls.map(fetchTokens));
     console.log(`Fetched ${tokenSets.length} token sets in total`);
     
     const validTokenSets = tokenSets.filter(set => set !== null);
