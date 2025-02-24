@@ -3,10 +3,6 @@ import fetch from "node-fetch";
 import path from "path";
 import { fileURLToPath } from "url";
 import { extractCollectionAndMode, extractCollectionModes } from "./utils.js";
-import { createRequire } from "module";
-
-// Use createRequire for importing Style Dictionary in ESM context
-const require = createRequire(import.meta.url);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -115,6 +111,23 @@ async function fileExists(filePath) {
 }
 
 /**
+ * Downgrade Style Dictionary to a version that works with CommonJS
+ */
+async function downgradeStyleDictionary() {
+  console.log("🔄 Downgrading Style Dictionary to compatible version...");
+  const { execSync } = await import('child_process');
+  
+  try {
+    execSync('npm uninstall style-dictionary');
+    execSync('npm install style-dictionary@3.7.0');
+    return true;
+  } catch (error) {
+    console.error("❗️Error downgrading Style Dictionary:", error);
+    return false;
+  }
+}
+
+/**
  * Main function that builds tokens
  */
 (async () => {
@@ -148,75 +161,52 @@ async function fileExists(filePath) {
     return;
   }
 
+  // Temporarily downgrade Style Dictionary to a compatible version
+  await downgradeStyleDictionary();
+  
   try {
-    // Create the CJS bridge file
-    const bridgeFilePath = path.join(__dirname, 'sd-bridge.cjs');
+    // Create a temporary ESM bridge file
+    const bridgeFilePath = path.join(__dirname, 'sd-bridge.js');
     const bridgeContent = `
-    // This is a CommonJS bridge file for Style Dictionary
-    const StyleDictionary = require('style-dictionary');
-    const TokenStudioTransforms = require('@tokens-studio/sd-transforms');
-
-    // Register the tokens-studio transforms to Style Dictionary
-    TokenStudioTransforms.register(StyleDictionary);
-
-    // Export a function to build tokens using Style Dictionary
-    module.exports = function buildTokens(config) {
+    // ESM bridge for Style Dictionary
+    import StyleDictionary from 'style-dictionary';
+    import { register } from '@tokens-studio/sd-transforms';
+    
+    // Register the transforms
+    register(StyleDictionary);
+    
+    // Export a function to build tokens
+    export function buildTokens(config) {
       try {
-        // Create Style Dictionary instance
-        const styleDictionary = StyleDictionary.extend(config);
-        
-        // Build all platforms
-        styleDictionary.buildAllPlatforms();
-        
+        const dictionary = StyleDictionary.extend(config);
+        dictionary.buildAllPlatforms();
         return true;
       } catch (error) {
         console.error('Error in Style Dictionary build:', error);
         return false;
       }
-    };
+    }
     `;
     
     await fs.writeFile(bridgeFilePath, bridgeContent);
-    console.log("✅ Created CommonJS bridge file for Style Dictionary");
+    console.log("✅ Created ESM bridge file");
     
-    // Create package.json that marks sd-bridge.cjs as CommonJS
-    const packageJsonPath = path.join(__dirname, 'package-temp.json');
-    const packageJsonContent = {
-      "name": "style-dictionary-bridge",
-      "version": "1.0.0",
-      "type": "module",
-      "imports": {
-        "#internal/bridge": "./sd-bridge.cjs"
-      }
-    };
+    // Import and use the bridge
+    const bridge = await import('./sd-bridge.js');
+    const success = bridge.buildTokens(getStyleDictionaryConfig());
     
-    await fs.writeFile(packageJsonPath, JSON.stringify(packageJsonContent, null, 2));
-    console.log("✅ Created temporary package.json for module resolution");
-    
-    // Use the bridge
-    try {
-      const buildTokens = require('./sd-bridge.cjs');
-      const success = buildTokens(getStyleDictionaryConfig());
-      
-      if (success) {
-        console.log("✅ Merged tokens generated at: build/json/merged-tokens.json");
-      } else {
-        console.error("❗️Style Dictionary build failed");
-      }
-    } catch (error) {
-      console.error("❗️Error running Style Dictionary:", error);
+    if (success) {
+      console.log("✅ Merged tokens generated at: build/json/merged-tokens.json");
+    } else {
+      console.error("❗️Style Dictionary build failed");
     }
     
     // Clean up
-    try {
-      await fs.unlink(bridgeFilePath);
-      await fs.unlink(packageJsonPath);
-      console.log("✅ Cleaned up temporary files");
-    } catch (cleanupError) {
-      console.warn("⚠️ Could not clean up temporary files:", cleanupError);
-    }
+    await fs.unlink(bridgeFilePath);
+    console.log("✅ Cleaned up bridge file");
+    
   } catch (error) {
-    console.error("❗️Error in main process:", error);
+    console.error("❗️Error running Style Dictionary:", error);
     console.error(error.stack);
   }
 })();
