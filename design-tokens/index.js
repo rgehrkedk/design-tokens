@@ -68,15 +68,19 @@ async function saveFiles(links) {
 /**
  * Returns Style Dictionary config
  *
- * @param {string} mode1 - First mode (e.g., "light", "dark")
- * @param {string} mode2 - Second mode (e.g., "eboks", "postnl")
+ * @param {string} themeMode - Theme mode (e.g., "light", "dark")
+ * @param {string} brandMode - Brand mode (e.g., "eboks", "postnl")
  * @returns {object} Style Dictionary config
  */
-function getStyleDictionaryConfig(mode1, mode2) {
-  const buildDir = [mode1, mode2].join("_");
+function getStyleDictionaryConfig(themeMode, brandMode) {
+  const buildDir = [themeMode, brandMode].join("_");
 
   return {
-    source: [`json/theme/${mode1}.json`, `json/brand/${mode2}.json`],
+    source: [
+      `json/theme/${themeMode}.json`,
+      `json/brand/${brandMode}.json`,
+      `json/globals/value.json` // Adding globals
+    ],
     platforms: {
       web: {
         transformGroup: "web",
@@ -134,14 +138,16 @@ async function fileExists(filePath) {
 
   const brandModes = collectionModes.brand || [];
   const themeModes = collectionModes.theme || [];
+  const globalsModes = collectionModes.globals || [];
   const platforms = ["web", "ios"];
 
   console.log("\n🚀 Build started...");
   console.log("🎨 Theme Modes:", themeModes);
   console.log("🏢 Brand Modes:", brandModes);
+  console.log("🌍 Globals Mode:", globalsModes);
 
-  if (themeModes.length === 0 || brandModes.length === 0) {
-    console.error("❗️Missing theme or brand modes, cannot continue.");
+  if (themeModes.length === 0 || brandModes.length === 0 || globalsModes.length === 0) {
+    console.error("❗️Missing theme, brand, or global modes, cannot continue.");
     return;
   }
 
@@ -150,18 +156,19 @@ async function fileExists(filePath) {
       for (const platform of platforms) {
         const themeFile = `json/theme/${themeMode}.json`;
         const brandFile = `json/brand/${brandMode}.json`;
+        const globalsFile = `json/globals/value.json`;
 
         const themeExists = await fileExists(themeFile);
         const brandExists = await fileExists(brandFile);
+        const globalsExists = await fileExists(globalsFile);
 
-        if (!themeExists || !brandExists) {
-          console.error(`❗️Missing files: ${themeFile} or ${brandFile}`);
+        if (!themeExists || !brandExists || !globalsExists) {
+          console.error(`❗️Missing files: ${themeFile} or ${brandFile} or ${globalsFile}`);
           continue;
         }
 
         const sd = new StyleDictionary(getStyleDictionaryConfig(themeMode, brandMode));
-        sd.log.verbosity = "verbose"; // Enable detailed logs
-        await sd.buildPlatform(platform);
+        sd.buildPlatform(platform);
       }
     }
   }
