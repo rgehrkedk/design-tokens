@@ -10,12 +10,10 @@
   },
   "author": "",
   "license": "ISC",
-  "devDependencies": {
-    "style-dictionary": "^4.3.3"
-  },
   "dependencies": {
     "@tokens-studio/sd-transforms": "^1.2.9",
     "chokidar": "^4.0.3",
-    "node-fetch": "^3.3.2"
+    "node-fetch": "^3.3.2",
+    "style-dictionary": "^3.8.0"
   }
 }
