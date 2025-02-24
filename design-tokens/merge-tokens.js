@@ -4,6 +4,86 @@ const path = require('path');
 const axios = require('axios');
 const StyleDictionary = require('style-dictionary');
 
+// Base URL to fetch list of token URLs - this should be the only thing that needs to change
+const STYLE_DICTIONARY_LINKS_URL = 'https://e-boks.zeroheight.com/api/token_management/token_set/10617/style_dictionary_links';
+
+// In case we need to convert hex to HSL manually
+function hexToHSL(hex) {
+  // Remove the # if present
+  hex = hex.replace(/^#/, '');
+  
+  // Parse the hex values
+  let r, g, b;
+  if (hex.length === 3) {
+    r = parseInt(hex.charAt(0) + hex.charAt(0), 16) / 255;
+    g = parseInt(hex.charAt(1) + hex.charAt(1), 16) / 255;
+    b = parseInt(hex.charAt(2) + hex.charAt(2), 16) / 255;
+  } else {
+    r = parseInt(hex.substring(0, 2), 16) / 255;
+    g = parseInt(hex.substring(2, 4), 16) / 255;
+    b = parseInt(hex.substring(4, 6), 16) / 255;
+  }
+  
+  // Find the min and max values to calculate saturation
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  
+  // Calculate lightness
+  let l = (max + min) / 2;
+  
+  // Calculate saturation
+  let s = 0;
+  if (max !== min) {
+    s = l > 0.5 ? (max - min) / (2 - max - min) : (max - min) / (max + min);
+  }
+  
+  // Calculate hue
+  let h = 0;
+  if (max !== min) {
+    if (max === r) {
+      h = (g - b) / (max - min) + (g < b ? 6 : 0);
+    } else if (max === g) {
+      h = (b - r) / (max - min) + 2;
+    } else {
+      h = (r - g) / (max - min) + 4;
+    }
+    h /= 6;
+  }
+  
+  // Convert to degrees, and percentages
+  h = Math.round(h * 360);
+  s = Math.round(s * 100);
+  l = Math.round(l * 100);
+  
+  return `hsl(${h}, ${s}%, ${l}%)`;
+}
+
+// Function to recursively convert hex colors in token objects
+function convertHexToHSL(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  
+  // Handle arrays
+  if (Array.isArray(obj)) {
+    return obj.map(item => convertHexToHSL(item));
+  }
+  
+  // Create a copy of the object
+  const result = {...obj};
+  
+  // Process each property
+  for (const key in result) {
+    if (key === 'value' && result['type'] === 'color' && typeof result[key] === 'string' && result[key].startsWith('#')) {
+      // Convert hex color values to HSL
+      result[key] = hexToHSL(result[key]);
+    } else if (typeof result[key] === 'object' && result[key] !== null) {
+      // Recursively process nested objects
+      result[key] = convertHexToHSL(result[key]);
+    }
+  }
+  
+  return result;
+}
+
 // Load the sd-transforms package - try different import methods
 let sdTransforms;
 try {
@@ -40,31 +120,23 @@ try {
   sdTransforms = null;
 }
 
-// Base URL to fetch list of token URLs - this should be the only thing that needs to change
-const STYLE_DICTIONARY_LINKS_URL = 'https://e-boks.zeroheight.com/api/token_management/token_set/10617/style_dictionary_links';
-
 // Function to fetch the list of token URLs
 async function fetchTokenUrls() {
   try {
     console.log(`Fetching token URLs from: ${STYLE_DICTIONARY_LINKS_URL}`);
     const response = await axios.get(STYLE_DICTIONARY_LINKS_URL);
     
-    // Parse the response as newline-separated URLs
+    // Based on the ZeroHeight demo script, we need to split by newlines
     if (typeof response.data === 'string') {
       const links = response.data.split('\n').filter(link => link.trim() !== '');
       console.log(`Found ${links.length} token URLs`);
-      
-      if (links.length === 0) {
-        throw new Error('No URLs found in the response');
-      }
-      
       return links;
-    } else {
-      throw new Error(`Unexpected response format: ${typeof response.data}`);
     }
+    
+    throw new Error('Unexpected response format from links endpoint');
   } catch (error) {
     console.error(`Error fetching token URLs: ${error.message}`);
-    throw error; // Re-throw to handle in the main function
+    throw error;
   }
 }
 
@@ -202,82 +274,102 @@ async function fetchTokens(url) {
   }
 }
 
-// In case SD-transforms doesn't support HSL directly, we'll add a utility function
-// to convert hex to HSL as a backup
-function hexToHSL(hex) {
-  // Remove the # if present
-  hex = hex.replace(/^#/, '');
-  
-  // Parse the hex values
-  let r, g, b;
-  if (hex.length === 3) {
-    r = parseInt(hex.charAt(0) + hex.charAt(0), 16) / 255;
-    g = parseInt(hex.charAt(1) + hex.charAt(1), 16) / 255;
-    b = parseInt(hex.charAt(2) + hex.charAt(2), 16) / 255;
-  } else {
-    r = parseInt(hex.substring(0, 2), 16) / 255;
-    g = parseInt(hex.substring(2, 4), 16) / 255;
-    b = parseInt(hex.substring(4, 6), 16) / 255;
-  }
-  
-  // Find the min and max values to calculate saturation
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  
-  // Calculate lightness
-  let l = (max + min) / 2;
-  
-  // Calculate saturation
-  let s = 0;
-  if (max !== min) {
-    s = l > 0.5 ? (max - min) / (2 - max - min) : (max - min) / (max + min);
-  }
-  
-  // Calculate hue
-  let h = 0;
-  if (max !== min) {
-    if (max === r) {
-      h = (g - b) / (max - min) + (g < b ? 6 : 0);
-    } else if (max === g) {
-      h = (b - r) / (max - min) + 2;
-    } else {
-      h = (r - g) / (max - min) + 4;
+// Function to apply Style Dictionary transforms
+function transformWithStyleDictionary(tokens, brandMode) {
+  try {
+    // Create a temporary file to store the tokens
+    const tempDir = path.resolve('./temp');
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir);
     }
-    h /= 6;
+    
+    const tempFile = path.join(tempDir, `${brandMode}-tokens-temp.json`);
+    fs.writeFileSync(tempFile, JSON.stringify(tokens, null, 2));
+    
+    // Create Style Dictionary config - with fallbacks if sd-transforms isn't available
+    const sdConfig = {
+      source: [tempFile],
+      platforms: {
+        json: {
+          // If sd-transforms was loaded, try to use tokens-studio transformGroup
+          // Otherwise use a simple color-hsl transform
+          transformGroup: sdTransforms ? 'tokens-studio' : undefined,
+          transforms: sdTransforms ? [
+            'ts/color/modifiers',
+            'ts/size/px',
+            'ts/opacity',
+            'ts/size/lineheight',
+            'ts/typography/fontWeight',
+            'ts/resolveMath',
+            'ts/size/css/letterspacing',
+            'ts/typography/css/fontFamily',
+            'ts/typography/css/shorthand',
+            'ts/border/css/shorthand',
+            'ts/shadow/css/shorthand',
+            'ts/color/css/hexrgba',
+            'ts/color/css/hsl', // Use HSL format for colors
+            'name/cti/kebab'
+          ] : [
+            // Fallback transform will be registered separately
+            'color/css/hsl'
+          ],
+          buildPath: path.resolve('./output/') + '/',
+          files: [
+            {
+              destination: `${brandMode}-tokens.json`,
+              format: 'json/nested'
+            }
+          ]
+        }
+      }
+    };
+    
+    // If sd-transforms wasn't loaded, register the HSL color transform
+    if (!sdTransforms) {
+      StyleDictionary.registerTransform({
+        name: 'color/css/hsl',
+        type: 'value',
+        matcher: token => token.type === 'color',
+        transformer: token => {
+          const hex = token.value.toString();
+          return hexToHSL(hex);
+        }
+      });
+    }
+    
+    // Build with Style Dictionary
+    const sd = StyleDictionary.extend(sdConfig);
+    sd.buildAllPlatforms();
+    
+    console.log(`Applied Style Dictionary transforms for ${brandMode}`);
+    
+    // Clean up temp file
+    if (fs.existsSync(tempFile)) {
+      fs.unlinkSync(tempFile);
+    }
+    
+    // Return the path to the output file
+    return path.resolve(`./output/${brandMode}-tokens.json`);
+  } catch (error) {
+    console.error(`Error applying Style Dictionary transforms for ${brandMode}:`, error.message);
+    
+    // Fallback: use simple hexToHSL conversion
+    return null;
   }
-  
-  // Convert to degrees, and percentages
-  h = Math.round(h * 360);
-  s = Math.round(s * 100);
-  l = Math.round(l * 100);
-  
-  return `hsl(${h}, ${s}%, ${l}%)`;
 }
 
-// Function to recursively convert hex colors in token objects
-function convertHexToHSL(obj) {
-  if (!obj || typeof obj !== 'object') return obj;
+// Function to handle the fallback conversion if Style Dictionary fails
+function manuallyTransformTokens(tokens, brandMode) {
+  console.log(`Using manual HSL conversion for ${brandMode}`);
   
-  // Handle arrays
-  if (Array.isArray(obj)) {
-    return obj.map(item => convertHexToHSL(item));
-  }
+  // Do manual conversion of hex colors to HSL
+  const transformedTokens = convertHexToHSL(tokens);
   
-  // Create a copy of the object
-  const result = {...obj};
+  // Save to file
+  const outputFile = path.resolve(`./output/${brandMode}-tokens.json`);
+  fs.writeFileSync(outputFile, JSON.stringify(transformedTokens, null, 2));
   
-  // Process each property
-  for (const key in result) {
-    if (key === 'value' && result['type'] === 'color' && typeof result[key] === 'string' && result[key].startsWith('#')) {
-      // Convert hex color values to HSL
-      result[key] = hexToHSL(result[key]);
-    } else if (typeof result[key] === 'object' && result[key] !== null) {
-      // Recursively process nested objects
-      result[key] = convertHexToHSL(result[key]);
-    }
-  }
-  
-  return result;
+  return outputFile;
 }
 
 // Main function to process all tokens
@@ -342,9 +434,17 @@ async function processTokens() {
         
         // Apply Style Dictionary transforms
         console.log(`Applying transforms for ${brandMode}...`);
-        const outputPath = applyTransforms(mergedTokens, brandMode);
         
-        console.log(`Saved ${brandMode} tokens to ${outputPath}`);
+        // Try Style Dictionary first
+        const outputPath = transformWithStyleDictionary(mergedTokens, brandMode);
+        
+        // If Style Dictionary failed, use manual transformation
+        if (!outputPath) {
+          const manualOutputPath = manuallyTransformTokens(mergedTokens, brandMode);
+          console.log(`Saved ${brandMode} tokens to ${manualOutputPath} (manual conversion)`);
+        } else {
+          console.log(`Saved ${brandMode} tokens to ${outputPath}`);
+        }
       }
       
       // Also create a combined reference file
@@ -357,9 +457,12 @@ async function processTokens() {
         }
       };
       
+      // Convert colors in the combined file too
+      const transformedAllTokens = convertHexToHSL(allTokens);
+      
       fs.writeFileSync(
         path.join(outputDir, 'all-tokens.json'),
-        JSON.stringify(allTokens, null, 2)
+        JSON.stringify(transformedAllTokens, null, 2)
       );
       
       console.log(`Saved combined reference to ${path.join(outputDir, 'all-tokens.json')}`);
@@ -367,9 +470,12 @@ async function processTokens() {
       // If no brand collections were found, just save what we have
       console.log('No brand collections found. Saving all collections as-is.');
       
+      // Convert colors in this file too
+      const transformedCollections = convertHexToHSL(collections);
+      
       fs.writeFileSync(
         path.join(outputDir, 'all-tokens.json'),
-        JSON.stringify(collections, null, 2)
+        JSON.stringify(transformedCollections, null, 2)
       );
       
       console.log(`Saved all tokens to ${path.join(outputDir, 'all-tokens.json')}`);
