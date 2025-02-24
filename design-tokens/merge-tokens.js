@@ -2,7 +2,11 @@
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
-const sdTransforms = require('@tokens-studio/sd-transforms');
+const StyleDictionary = require('style-dictionary');
+const { transformers } = require('@tokens-studio/sd-transforms');
+
+// Register all the @tokens-studio/sd-transforms transformers with Style Dictionary
+transformers.registerTransforms(StyleDictionary);
 
 // Base URL to fetch list of token URLs - this should be the only thing that needs to change
 const STYLE_DICTIONARY_LINKS_URL = 'https://e-boks.zeroheight.com/api/token_management/token_set/10617/style_dictionary_links';
@@ -166,18 +170,82 @@ async function fetchTokens(url) {
   }
 }
 
-// Apply the appropriate transform method
-function applyTransforms(tokens) {
-  if (typeof sdTransforms === 'function') {
-    return sdTransforms(tokens);
-  } else if (sdTransforms.default && typeof sdTransforms.default === 'function') {
-    return sdTransforms.default(tokens);
-  } else if (sdTransforms.transform && typeof sdTransforms.transform === 'function') {
-    return sdTransforms.transform(tokens);
+// In case SD-transforms doesn't support HSL directly, we'll add a utility function
+// to convert hex to HSL as a backup
+function hexToHSL(hex) {
+  // Remove the # if present
+  hex = hex.replace(/^#/, '');
+  
+  // Parse the hex values
+  let r, g, b;
+  if (hex.length === 3) {
+    r = parseInt(hex.charAt(0) + hex.charAt(0), 16) / 255;
+    g = parseInt(hex.charAt(1) + hex.charAt(1), 16) / 255;
+    b = parseInt(hex.charAt(2) + hex.charAt(2), 16) / 255;
   } else {
-    console.log('No transform method found in sd-transforms. Using tokens without transformation.');
-    return tokens;
+    r = parseInt(hex.substring(0, 2), 16) / 255;
+    g = parseInt(hex.substring(2, 4), 16) / 255;
+    b = parseInt(hex.substring(4, 6), 16) / 255;
   }
+  
+  // Find the min and max values to calculate saturation
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  
+  // Calculate lightness
+  let l = (max + min) / 2;
+  
+  // Calculate saturation
+  let s = 0;
+  if (max !== min) {
+    s = l > 0.5 ? (max - min) / (2 - max - min) : (max - min) / (max + min);
+  }
+  
+  // Calculate hue
+  let h = 0;
+  if (max !== min) {
+    if (max === r) {
+      h = (g - b) / (max - min) + (g < b ? 6 : 0);
+    } else if (max === g) {
+      h = (b - r) / (max - min) + 2;
+    } else {
+      h = (r - g) / (max - min) + 4;
+    }
+    h /= 6;
+  }
+  
+  // Convert to degrees, and percentages
+  h = Math.round(h * 360);
+  s = Math.round(s * 100);
+  l = Math.round(l * 100);
+  
+  return `hsl(${h}, ${s}%, ${l}%)`;
+}
+
+// Function to recursively convert hex colors in token objects
+function convertHexToHSL(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  
+  // Handle arrays
+  if (Array.isArray(obj)) {
+    return obj.map(item => convertHexToHSL(item));
+  }
+  
+  // Create a copy of the object
+  const result = {...obj};
+  
+  // Process each property
+  for (const key in result) {
+    if (key === 'value' && result['type'] === 'color' && typeof result[key] === 'string' && result[key].startsWith('#')) {
+      // Convert hex color values to HSL
+      result[key] = hexToHSL(result[key]);
+    } else if (typeof result[key] === 'object' && result[key] !== null) {
+      // Recursively process nested objects
+      result[key] = convertHexToHSL(result[key]);
+    }
+  }
+  
+  return result;
 }
 
 // Main function to process all tokens
@@ -240,17 +308,11 @@ async function processTokens() {
           theme: themeTokens
         };
         
-        // Apply transforms
+        // Apply Style Dictionary transforms
         console.log(`Applying transforms for ${brandMode}...`);
-        const transformedTokens = applyTransforms(mergedTokens);
+        const outputPath = applyTransforms(mergedTokens, brandMode);
         
-        // Save to file
-        fs.writeFileSync(
-          path.join(outputDir, `${brandMode}-tokens.json`),
-          JSON.stringify(transformedTokens, null, 2)
-        );
-        
-        console.log(`Saved ${brandMode} tokens to ${path.join(outputDir, `${brandMode}-tokens.json`)}`);
+        console.log(`Saved ${brandMode} tokens to ${outputPath}`);
       }
       
       // Also create a combined reference file
