@@ -13,41 +13,81 @@ async function fetchTokenUrls() {
     console.log(`Fetching token URLs from: ${STYLE_DICTIONARY_LINKS_URL}`);
     const response = await axios.get(STYLE_DICTIONARY_LINKS_URL);
     
-    // The response should contain the list of token URLs
-    if (Array.isArray(response.data)) {
-      console.log(`Found ${response.data.length} token URLs`);
-      return response.data;
-    } else if (typeof response.data === 'string') {
-      // In case the response is a JSON string
-      try {
-        const parsedData = JSON.parse(response.data);
-        if (Array.isArray(parsedData)) {
-          console.log(`Found ${parsedData.length} token URLs`);
-          return parsedData;
+    // Log what we got back for debugging
+    console.log('Response type:', typeof response.data);
+    console.log('Response preview:', typeof response.data === 'string' 
+      ? response.data.substring(0, 200) + '...' 
+      : JSON.stringify(response.data).substring(0, 200) + '...');
+    
+    // Handle plain text response with URLs
+    if (typeof response.data === 'string') {
+      // Extract URLs using regex - this will find all URLs in the response
+      const urlRegex = /(https?:\/\/[^\s"'<>]+)/g;
+      const matches = response.data.match(urlRegex);
+      
+      if (matches && matches.length > 0) {
+        // Filter to only include style dictionary URLs
+        const styleUrls = matches.filter(url => 
+          url.includes('format=style-dictionary') || 
+          url.includes('token_set') || 
+          url.includes('export')
+        );
+        
+        if (styleUrls.length > 0) {
+          console.log(`Found ${styleUrls.length} token URLs using regex`);
+          return styleUrls;
         }
-      } catch (e) {
-        console.error('Failed to parse JSON response:', e.message);
+      }
+      
+      // If no matches found with regex, check if it's a direct URL
+      if (response.data.trim().startsWith('http') && 
+          (response.data.includes('format=style-dictionary') || 
+           response.data.includes('token_set'))) {
+        // Split by newlines in case there are multiple URLs
+        const urls = response.data.trim().split(/\r?\n/).filter(line => 
+          line.trim().startsWith('http')
+        );
+        
+        if (urls.length > 0) {
+          console.log(`Found ${urls.length} token URLs by line splitting`);
+          return urls;
+        }
       }
     }
     
-    // If the structure is different, try to extract URLs from it
-    console.log('Response structure:', typeof response.data);
+    // If we're here, try to parse as JSON
     if (typeof response.data === 'object' && response.data !== null) {
-      // Print a small sample of the response for debugging
-      console.log('Response sample:', JSON.stringify(response.data).substring(0, 200) + '...');
-      
-      // Try to extract URLs from the response
+      // The response might be a JSON object with URLs
       const extractedUrls = extractUrlsFromResponse(response.data);
       if (extractedUrls.length > 0) {
-        console.log(`Extracted ${extractedUrls.length} URLs from response`);
+        console.log(`Extracted ${extractedUrls.length} URLs from JSON response`);
         return extractedUrls;
       }
     }
     
-    throw new Error('Could not extract token URLs from the response');
+    // Last resort: use hardcoded URLs
+    console.warn('Could not extract URLs from response, using hardcoded URLs');
+    return [
+      'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22009&mode_id=38483&collection_name=brand&mode_name=eboks',
+      'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22009&mode_id=38484&collection_name=brand&mode_name=postnl',
+      'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22009&mode_id=38485&collection_name=brand&mode_name=nykredit',
+      'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22010&mode_id=38486&collection_name=theme&mode_name=light',
+      'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22010&mode_id=38487&collection_name=theme&mode_name=dark',
+      'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22011&mode_id=38488&collection_name=globals&mode_name=value'
+    ];
   } catch (error) {
     console.error(`Error fetching token URLs: ${error.message}`);
-    throw error;
+    
+    // Fallback to hardcoded URLs
+    console.warn('Using hardcoded URLs due to error');
+    return [
+      'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22009&mode_id=38483&collection_name=brand&mode_name=eboks',
+      'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22009&mode_id=38484&collection_name=brand&mode_name=postnl',
+      'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22009&mode_id=38485&collection_name=brand&mode_name=nykredit',
+      'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22010&mode_id=38486&collection_name=theme&mode_name=light',
+      'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22010&mode_id=38487&collection_name=theme&mode_name=dark',
+      'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22011&mode_id=38488&collection_name=globals&mode_name=value'
+    ];
   }
 }
 
