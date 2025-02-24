@@ -57,58 +57,59 @@ async function mergeAllTokens() {
     }
     
     // Create a merged token structure
-    const mergedTokens = {
-      globals: {},
-      brand: {
-        eboks: {},
-        postnl: {},
-        nykredit: {}
-      },
-      theme: {
-        light: {},
-        dark: {}
-      }
-    };
+    // Instead of merging brands together, we'll create separate outputs for each brand
+    const brandModes = validTokenSets.filter(set => set.collection === 'brand').map(set => set.mode);
+    console.log(`Found brand modes: ${brandModes.join(', ')}`);
     
-    // Organize tokens into the merged structure
-    for (const set of validTokenSets) {
-      const { data, collection, mode } = set;
+    // Get the global and theme tokens
+    const globalsTokens = validTokenSets.find(set => set.collection === 'globals')?.data || {};
+    const lightThemeTokens = validTokenSets.find(set => set.collection === 'theme' && set.mode === 'light')?.data || {};
+    const darkThemeTokens = validTokenSets.find(set => set.collection === 'theme' && set.mode === 'dark')?.data || {};
+    
+    // Process each brand separately
+    for (const brandMode of brandModes) {
+      console.log(`Processing brand: ${brandMode}`);
       
-      if (collection === 'globals') {
-        mergedTokens.globals = data;
-      } else if (collection === 'brand') {
-        mergedTokens.brand[mode] = data;
-      } else if (collection === 'theme') {
-        mergedTokens.theme[mode] = data;
+      const brandTokens = validTokenSets.find(set => set.collection === 'brand' && set.mode === brandMode)?.data || {};
+      
+      // Create the merged structure for this brand
+      const mergedBrandTokens = {
+        globals: globalsTokens,
+        brand: brandTokens,
+        theme: {
+          light: lightThemeTokens,
+          dark: darkThemeTokens
+        }
+      };
+      
+      // Apply transforms (using the method that works)
+      console.log(`Applying transforms for ${brandMode}...`);
+      let transformedTokens;
+      
+      if (typeof sdTransforms === 'function') {
+        transformedTokens = sdTransforms(mergedBrandTokens);
+      } else if (sdTransforms.default && typeof sdTransforms.default === 'function') {
+        transformedTokens = sdTransforms.default(mergedBrandTokens);
+      } else if (sdTransforms.transform && typeof sdTransforms.transform === 'function') {
+        transformedTokens = sdTransforms.transform(mergedBrandTokens);
+      } else {
+        console.log('Could not find appropriate transform method. Using merged tokens without transformation.');
+        transformedTokens = mergedBrandTokens;
       }
+      
+      // Save the result for this brand
+      const outputDir = path.resolve('./output');
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir);
+      }
+      
+      fs.writeFileSync(
+        path.join(outputDir, `${brandMode}-tokens.json`),
+        JSON.stringify(transformedTokens, null, 2)
+      );
+      
+      console.log(`Saved tokens for ${brandMode} to ${path.join(outputDir, `${brandMode}-tokens.json`)}`);
     }
-    
-    // Apply transforms from tokens-studio/sd-transforms
-    console.log('Applying sd-transforms to the merged tokens...');
-    console.log('SD Transforms structure:', Object.keys(sdTransforms));
-    
-    // Use the library based on its actual structure
-    let transformedTokens;
-    
-    if (typeof sdTransforms === 'function') {
-      // If the default export is a function
-      transformedTokens = sdTransforms(mergedTokens);
-      console.log('Used default export function');
-    } else if (sdTransforms.default && typeof sdTransforms.default === 'function') {
-      // If there's a default property that's a function
-      transformedTokens = sdTransforms.default(mergedTokens);
-      console.log('Used sdTransforms.default function');
-    } else if (sdTransforms.transform && typeof sdTransforms.transform === 'function') {
-      // If there's a transform method
-      transformedTokens = sdTransforms.transform(mergedTokens);
-      console.log('Used sdTransforms.transform function');
-    } else {
-      // If we can't find the right method, just use the merged tokens as is
-      console.log('Could not find appropriate transform method. Using merged tokens without transformation.');
-      transformedTokens = mergedTokens;
-    }
-    
-    console.log('Processing completed');
     
     // Save the merged and transformed result
     const outputDir = path.resolve('./output');
@@ -116,13 +117,31 @@ async function mergeAllTokens() {
       fs.mkdirSync(outputDir);
     }
     
+    // Also create a combined file with all brands (for reference)
+    const allBrands = {};
+    brandModes.forEach(brandMode => {
+      const brandData = validTokenSets.find(set => set.collection === 'brand' && set.mode === brandMode)?.data || {};
+      allBrands[brandMode] = brandData;
+    });
+    
+    const allTokens = {
+      globals: globalsTokens,
+      brands: allBrands,
+      theme: {
+        light: lightThemeTokens,
+        dark: darkThemeTokens
+      }
+    };
+    
     fs.writeFileSync(
-      path.join(outputDir, 'merged-tokens.json'),
-      JSON.stringify(transformedTokens, null, 2)
+      path.join(outputDir, 'all-tokens.json'),
+      JSON.stringify(allTokens, null, 2)
     );
     
-    console.log('Successfully merged and transformed all token sets!');
-    console.log(`Output saved to ${path.join(outputDir, 'merged-tokens.json')}`);
+    console.log(`Also saved combined reference file to ${path.join(outputDir, 'all-tokens.json')}`);
+    
+    console.log('Successfully processed all token sets!');
+    console.log(`Output saved to ${outputDir}`);
     
   } catch (error) {
     console.error('Error merging tokens:', error.message);
