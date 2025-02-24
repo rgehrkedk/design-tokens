@@ -4,13 +4,6 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { register } from "@tokens-studio/sd-transforms";
 import { extractCollectionAndMode, extractCollectionModes } from "./utils.js";
-import { createRequire } from 'module';
-
-// Create a require function
-const require = createRequire(import.meta.url);
-
-// Use require to import Style Dictionary (CommonJS approach)
-const StyleDictionary = require('style-dictionary');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -147,12 +140,36 @@ async function fileExists(filePath) {
     return;
   }
 
-  // Register Tokens Studio transforms
-  register(StyleDictionary);
-  
-  // Use the extend method for Style Dictionary v4
-  const SD = StyleDictionary.extend(getStyleDictionaryConfig());
-  SD.buildAllPlatforms();
-
-  console.log("✅ Merged tokens generated at: build/json/merged-tokens.json");
+  try {
+    // Dynamically import a new module that imports Style Dictionary properly
+    // This is the cleanest workaround for ESM/Style Dictionary issues
+    
+    // Create a temporary file that will import Style Dictionary
+    const tempFilePath = path.join(__dirname, 'temp-style-dictionary.js');
+    const tempFileContent = `
+    import StyleDictionary from 'style-dictionary';
+    export default StyleDictionary;
+    `;
+    await fs.writeFile(tempFilePath, tempFileContent);
+    
+    // Import our temp file which correctly imports Style Dictionary
+    const StyleDictionary = (await import('./temp-style-dictionary.js')).default;
+    
+    // Register transformations
+    register(StyleDictionary);
+    
+    // Create a style dictionary instance using extend
+    const dictionary = StyleDictionary.extend(getStyleDictionaryConfig());
+    
+    // Build all platforms
+    dictionary.buildAllPlatforms();
+    
+    // Clean up temp file
+    await fs.unlink(tempFilePath);
+    
+    console.log("✅ Merged tokens generated at: build/json/merged-tokens.json");
+  } catch (error) {
+    console.error("❗️Error building tokens:", error);
+    console.log("Error details:", error.stack);
+  }
 })();
