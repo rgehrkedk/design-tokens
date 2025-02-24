@@ -160,7 +160,8 @@ async function fileExists(filePath) {
         }
 
         const sd = new StyleDictionary(getStyleDictionaryConfig(themeMode, brandMode));
-        sd.buildPlatform(platform);
+        sd.log.verbosity = "verbose"; // Enable detailed logs
+        await sd.buildPlatform(platform);
       }
     }
   }
