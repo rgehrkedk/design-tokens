@@ -2,11 +2,7 @@ import { promises as fs } from "fs";
 import fetch from "node-fetch";
 import path from "path";
 import { fileURLToPath } from "url";
-import { register } from "@tokens-studio/sd-transforms";
 import { extractCollectionAndMode, extractCollectionModes } from "./utils.js";
-
-// Import Style Dictionary
-import StyleDictionaryPackage from "style-dictionary";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -69,30 +65,61 @@ async function saveFiles(links) {
 }
 
 /**
- * Returns Style Dictionary config
- *
- * @returns {object} Style Dictionary config to merge all tokens into one JSON file
+ * Manually merge all tokens into a single file
+ * 
+ * @param {Object} options - Options object
+ * @param {string[]} options.themeModes - List of theme modes
+ * @param {string[]} options.brandModes - List of brand modes 
+ * @param {string[]} options.globalsModes - List of globals modes
  */
-function getStyleDictionaryConfig() {
-  return {
-    source: [
-      "json/theme/*.json",
-      "json/brand/*.json",
-      "json/globals/*.json",
-    ],
-    platforms: {
-      json: {
-        transformGroup: "tokens-studio", // Apply the tokens-studio transformation
-        buildPath: "build/json/",
-        files: [
-          {
-            destination: "merged-tokens.json",
-            format: "json",
-          },
-        ],
-      },
-    },
-  };
+async function manuallyMergeTokens({ themeModes, brandModes, globalsModes }) {
+  try {
+    // Create build directory
+    const buildPath = path.join(__dirname, "build", "json");
+    await fs.mkdir(buildPath, { recursive: true });
+    
+    const mergedTokens = {};
+    
+    // Load and merge theme files
+    for (const mode of themeModes) {
+      const filePath = path.join(__dirname, "json", "theme", `${mode}.json`);
+      const content = await fs.readFile(filePath, "utf8");
+      const tokens = JSON.parse(content);
+      
+      // Add tokens to merged object
+      Object.assign(mergedTokens, tokens);
+    }
+    
+    // Load and merge brand files
+    for (const mode of brandModes) {
+      const filePath = path.join(__dirname, "json", "brand", `${mode}.json`);
+      const content = await fs.readFile(filePath, "utf8");
+      const tokens = JSON.parse(content);
+      
+      // Add tokens to merged object
+      Object.assign(mergedTokens, tokens);
+    }
+    
+    // Load and merge globals files
+    for (const mode of globalsModes) {
+      const filePath = path.join(__dirname, "json", "globals", `${mode}.json`);
+      const content = await fs.readFile(filePath, "utf8");
+      const tokens = JSON.parse(content);
+      
+      // Add tokens to merged object
+      Object.assign(mergedTokens, tokens);
+    }
+    
+    // Save merged tokens
+    const outputPath = path.join(buildPath, "merged-tokens.json");
+    await fs.writeFile(outputPath, JSON.stringify(mergedTokens, null, 2));
+    
+    console.log(`✅ Manually merged tokens saved to: ${outputPath}`);
+    return true;
+  } catch (error) {
+    console.error("❗️Error merging tokens:", error);
+    return false;
+  }
 }
 
 /**
@@ -143,14 +170,6 @@ async function fileExists(filePath) {
     return;
   }
 
-  // Register tokens-studio transforms
-  register(StyleDictionaryPackage);
-
-  // Create Style Dictionary instance
-  const StyleDictionary = StyleDictionaryPackage.extend(getStyleDictionaryConfig());
-
-  // Build all platforms
-  StyleDictionary.buildAllPlatforms();
-  
-  console.log("✅ Merged tokens generated at: build/json/merged-tokens.json");
+  // Skip Style Dictionary entirely and just manually merge the tokens
+  await manuallyMergeTokens({ themeModes, brandModes, globalsModes });
 })();
