@@ -3,6 +3,7 @@ import fetch from "node-fetch";
 import path from "path";
 import { fileURLToPath } from "url";
 import { extractCollectionAndMode, extractCollectionModes } from "./utils.js";
+import { execSync } from "child_process";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -65,37 +66,6 @@ async function saveFiles(links) {
 }
 
 /**
- * Returns Style Dictionary config with the correct token order
- * for proper reference resolution:
- * 1. globals (foundational values)
- * 2. brand (brand-specific tokens that might reference globals)
- * 3. theme (context-specific tokens that might reference globals and brand)
- *
- * @returns {object} Style Dictionary config
- */
-function getStyleDictionaryConfig() {
-  return {
-    source: [
-      "json/globals/*.json", // Globals first - foundational tokens
-      "json/brand/*.json",   // Brand second - might reference globals
-      "json/theme/*.json",   // Theme last - might reference both globals and brand
-    ],
-    platforms: {
-      json: {
-        // Use standard JSON format without tokens-studio transforms
-        buildPath: "build/json/",
-        files: [
-          {
-            destination: "merged-tokens.json",
-            format: "json",
-          },
-        ],
-      },
-    },
-  };
-}
-
-/**
  * Checks if a file exists (Async alternative to fs.existsSync)
  *
  * @param {string} filePath
@@ -111,45 +81,128 @@ async function fileExists(filePath) {
 }
 
 /**
- * Custom StyleDictionary implementation since direct imports are problematic
- * @param {Object} config - Style Dictionary config object
+ * Temporarily modify package.json to allow CommonJS execution
  */
-async function buildStyleDictionary(config) {
-  // Create build directory
-  await fs.mkdir(path.join(__dirname, config.platforms.json.buildPath), { recursive: true });
+async function setupCommonJS() {
+  const packageJsonPath = path.join(__dirname, 'package.json');
   
-  // Get all source files
-  let allTokens = {};
+  // Read current package.json
+  const packageJsonContent = await fs.readFile(packageJsonPath, 'utf8');
+  const originalPackageJson = JSON.parse(packageJsonContent);
   
-  // Process source files in the specified order for proper reference resolution
-  for (const sourceGlob of config.source) {
-    const directory = path.dirname(sourceGlob);
-    const files = await fs.readdir(directory);
-    
-    for (const file of files) {
-      if (file.endsWith('.json')) {
-        const filePath = path.join(directory, file);
-        const content = await fs.readFile(filePath, 'utf8');
-        
-        try {
-          const tokens = JSON.parse(content);
-          // Merge tokens into allTokens
-          allTokens = { ...allTokens, ...tokens };
-        } catch (e) {
-          console.error(`❗️Error parsing ${filePath}: ${e.message}`);
-        }
-      }
-    }
-  }
+  // Save original for later restoration
+  await fs.writeFile(
+    path.join(__dirname, '.package.json.bak'), 
+    packageJsonContent
+  );
   
-  // Write output file
-  const outputPath = path.join(__dirname, config.platforms.json.buildPath, 
-                               config.platforms.json.files[0].destination);
+  // Modify package.json to use CommonJS
+  const commonJSPackage = {
+    ...originalPackageJson,
+    type: "commonjs" // Change to CommonJS
+  };
   
-  await fs.writeFile(outputPath, JSON.stringify(allTokens, null, 2));
-  console.log(`✅ Built tokens at: ${outputPath}`);
+  // Write modified package.json
+  await fs.writeFile(
+    packageJsonPath, 
+    JSON.stringify(commonJSPackage, null, 2)
+  );
   
   return true;
+}
+
+/**
+ * Restore original package.json
+ */
+async function restorePackageJson() {
+  const packageJsonPath = path.join(__dirname, 'package.json');
+  const backupPath = path.join(__dirname, '.package.json.bak');
+  
+  // Read backup
+  const originalContent = await fs.readFile(backupPath, 'utf8');
+  
+  // Restore original
+  await fs.writeFile(packageJsonPath, originalContent);
+  
+  // Remove backup
+  await fs.unlink(backupPath);
+  
+  return true;
+}
+
+/**
+ * Create CommonJS build script
+ */
+async function createBuildScript() {
+  const scriptPath = path.join(__dirname, 'build-tokens.cjs');
+  const scriptContent = `
+// build-tokens.cjs
+// This file MUST use .cjs extension to be treated as CommonJS
+
+const fs = require('fs');
+const path = require('path');
+const StyleDictionary = require('style-dictionary');
+const { register } = require('@tokens-studio/sd-transforms');
+
+// Register tokens-studio transforms
+register(StyleDictionary);
+
+/**
+ * Returns Style Dictionary config with the correct token order
+ * for proper reference resolution:
+ * 1. globals (foundational values)
+ * 2. brand (brand-specific tokens that might reference globals)
+ * 3. theme (context-specific tokens that might reference globals and brand)
+ */
+function getStyleDictionaryConfig() {
+  return {
+    source: [
+      "json/globals/*.json", // Globals first - foundational tokens
+      "json/brand/*.json",   // Brand second - might reference globals
+      "json/theme/*.json",   // Theme last - might reference both globals and brand
+    ],
+    platforms: {
+      json: {
+        transformGroup: "tokens-studio", // Apply the tokens-studio transformation
+        buildPath: "build/json/",
+        files: [
+          {
+            destination: "merged-tokens.json",
+            format: "json",
+          },
+        ],
+      },
+    },
+  };
+}
+
+// Create Style Dictionary instance
+const config = getStyleDictionaryConfig();
+const SD = StyleDictionary.extend(config);
+
+// Build all platforms
+try {
+  SD.buildAllPlatforms();
+  console.log("✅ Tokens built successfully with Style Dictionary transformations");
+} catch (error) {
+  console.error("❗️Error building tokens:", error);
+}`;
+
+  await fs.writeFile(scriptPath, scriptContent);
+  return scriptPath;
+}
+
+/**
+ * Run the CommonJS build script
+ */
+function runBuildScript(scriptPath) {
+  try {
+    execSync(`node ${scriptPath}`, { stdio: 'inherit' });
+    return true;
+  } catch (error) {
+    console.error('❗️Error running build script:', error);
+    return false;
+  }
 }
 
 /**
@@ -187,11 +240,35 @@ async function buildStyleDictionary(config) {
   }
 
   try {
-    // Run custom Style Dictionary build without requiring the actual package
-    const config = getStyleDictionaryConfig();
-    await buildStyleDictionary(config);
+    console.log("🔄 Setting up CommonJS environment...");
+    await setupCommonJS();
+    
+    console.log("🔄 Creating build script...");
+    const scriptPath = await createBuildScript();
+    
+    console.log("🔄 Running Style Dictionary with transforms...");
+    const buildSuccess = runBuildScript(scriptPath);
+    
+    if (buildSuccess) {
+      console.log("✅ Tokens built successfully with all transformations applied");
+    }
+    
+    console.log("🔄 Restoring ESM environment...");
+    await restorePackageJson();
+    
+    console.log("🔄 Cleaning up build script...");
+    await fs.unlink(scriptPath);
+    
+    console.log("✅ Process completed");
   } catch (error) {
-    console.error("❗️Error building tokens:", error);
-    console.error(error.stack);
+    console.error("❗️Error in build process:", error);
+    
+    // Attempt to restore package.json even if there was an error
+    try {
+      await restorePackageJson();
+      console.log("✅ Package.json restored after error");
+    } catch (restoreError) {
+      console.error("❗️Error restoring package.json:", restoreError);
+    }
   }
 })();
