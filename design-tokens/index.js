@@ -103,6 +103,21 @@ function getStyleDictionaryConfig(mode1, mode2) {
 }
 
 /**
+ * Checks if a file exists (Async alternative to fs.existsSync)
+ *
+ * @param {string} filePath
+ * @returns {Promise<boolean>}
+ */
+async function fileExists(filePath) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Main function that builds tokens
  */
 (async () => {
@@ -130,23 +145,25 @@ function getStyleDictionaryConfig(mode1, mode2) {
     return;
   }
 
-  // Ensure files exist before running Style Dictionary
-  themeModes.forEach((themeMode) => {
-    brandModes.forEach((brandMode) => {
-      platforms.forEach((platform) => {
+  for (const themeMode of themeModes) {
+    for (const brandMode of brandModes) {
+      for (const platform of platforms) {
         const themeFile = `json/theme/${themeMode}.json`;
         const brandFile = `json/brand/${brandMode}.json`;
 
-        if (!fs.existsSync(themeFile) || !fs.existsSync(brandFile)) {
+        const themeExists = await fileExists(themeFile);
+        const brandExists = await fileExists(brandFile);
+
+        if (!themeExists || !brandExists) {
           console.error(`❗️Missing files: ${themeFile} or ${brandFile}`);
-          return;
+          continue;
         }
 
         const sd = new StyleDictionary(getStyleDictionaryConfig(themeMode, brandMode));
         sd.buildPlatform(platform);
-      });
-    });
-  });
+      }
+    }
+  }
 
   console.log("✅ Style Dictionary build completed!");
 })();
