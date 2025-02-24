@@ -2,7 +2,11 @@ import { promises as fs } from "fs";
 import fetch from "node-fetch";
 import path from "path";
 import { fileURLToPath } from "url";
+import { register } from "@tokens-studio/sd-transforms";
 import { extractCollectionAndMode, extractCollectionModes } from "./utils.js";
+
+// Import Style Dictionary
+import StyleDictionaryPackage from "style-dictionary";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -139,43 +143,14 @@ async function fileExists(filePath) {
     return;
   }
 
-  try {
-    // Create a temporary ESM bridge file that directly accesses Core
-    const bridgeFilePath = path.join(__dirname, 'sd-bridge.js');
-    const bridgeContent = `
-    // Direct import of Core module
-    import { Core } from 'style-dictionary/lib/Core.js';
-    import { register } from '@tokens-studio/sd-transforms';
-    
-    // Export a function to build tokens
-    export async function buildTokens(config) {
-      // Create a new Core instance with our config
-      const styleDictionary = new Core(config);
-      
-      // Register transforms
-      register(styleDictionary);
-      
-      // Build all platforms
-      styleDictionary.buildAllPlatforms();
-      
-      return true;
-    }
-    `;
-    
-    await fs.writeFile(bridgeFilePath, bridgeContent);
-    console.log("✅ Created ESM bridge file");
-    
-    // Import and use the bridge
-    const { buildTokens } = await import('./sd-bridge.js');
-    await buildTokens(getStyleDictionaryConfig());
-    
-    console.log("✅ Merged tokens generated at: build/json/merged-tokens.json");
-    
-    // Clean up the bridge file
-    await fs.unlink(bridgeFilePath);
-    console.log("✅ Cleaned up bridge file");
-  } catch (error) {
-    console.error("❗️Error building tokens:", error);
-    console.error("Stack trace:", error.stack);
-  }
+  // Register tokens-studio transforms
+  register(StyleDictionaryPackage);
+
+  // Create Style Dictionary instance
+  const StyleDictionary = StyleDictionaryPackage.extend(getStyleDictionaryConfig());
+
+  // Build all platforms
+  StyleDictionary.buildAllPlatforms();
+  
+  console.log("✅ Merged tokens generated at: build/json/merged-tokens.json");
 })();
