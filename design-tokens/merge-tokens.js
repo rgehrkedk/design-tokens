@@ -4,7 +4,7 @@ const path = require('path');
 const axios = require('axios');
 const sdTransforms = require('@tokens-studio/sd-transforms');
 
-// Base URL to fetch list of token URLs
+// Base URL to fetch list of token URLs - this should be the only thing that needs to change
 const STYLE_DICTIONARY_LINKS_URL = 'https://e-boks.zeroheight.com/api/token_management/token_set/10617/style_dictionary_links';
 
 // Function to fetch the list of token URLs
@@ -13,180 +13,281 @@ async function fetchTokenUrls() {
     console.log(`Fetching token URLs from: ${STYLE_DICTIONARY_LINKS_URL}`);
     const response = await axios.get(STYLE_DICTIONARY_LINKS_URL);
     
-    // Based on the ZeroHeight demo script, we need to split by newlines
+    // Parse the response as newline-separated URLs
     if (typeof response.data === 'string') {
       const links = response.data.split('\n').filter(link => link.trim() !== '');
-      console.log(`Found ${links.length} token URLs by splitting newlines`);
+      console.log(`Found ${links.length} token URLs`);
+      
+      if (links.length === 0) {
+        throw new Error('No URLs found in the response');
+      }
+      
       return links;
+    } else {
+      throw new Error(`Unexpected response format: ${typeof response.data}`);
     }
-    
-    // Fallback to hardcoded URLs
-    console.warn('Could not extract URLs from response, using hardcoded URLs');
-    return [
-      'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22009&mode_id=38483&collection_name=brand&mode_name=eboks',
-      'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22009&mode_id=38484&collection_name=brand&mode_name=postnl',
-      'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22009&mode_id=38485&collection_name=brand&mode_name=nykredit',
-      'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22010&mode_id=38486&collection_name=theme&mode_name=light',
-      'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22010&mode_id=38487&collection_name=theme&mode_name=dark',
-      'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22011&mode_id=38488&collection_name=globals&mode_name=value'
-    ];
   } catch (error) {
     console.error(`Error fetching token URLs: ${error.message}`);
-    
-    // Fallback to hardcoded URLs
-    console.warn('Using hardcoded URLs due to error');
-    return [
-      'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22009&mode_id=38483&collection_name=brand&mode_name=eboks',
-      'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22009&mode_id=38484&collection_name=brand&mode_name=postnl',
-      'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22009&mode_id=38485&collection_name=brand&mode_name=nykredit',
-      'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22010&mode_id=38486&collection_name=theme&mode_name=light',
-      'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22010&mode_id=38487&collection_name=theme&mode_name=dark',
-      'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22011&mode_id=38488&collection_name=globals&mode_name=value'
-    ];
+    throw error; // Re-throw to handle in the main function
   }
 }
 
-// Function to extract URLs from different response structures
-function extractUrlsFromResponse(data) {
-  const urls = [];
-  
-  // Check if it's directly an array of strings
-  if (Array.isArray(data)) {
-    const stringUrls = data.filter(item => typeof item === 'string' && item.includes('format=style-dictionary'));
-    if (stringUrls.length > 0) {
-      return stringUrls;
+// Function to parse collection and mode from a URL
+function parseCollectionAndMode(url) {
+  try {
+    const urlObj = new URL(url);
+    const params = urlObj.searchParams;
+    
+    // Try to get from URL parameters first - this is the most reliable method
+    let collection = params.get('collection_name');
+    let mode = params.get('mode_name');
+    
+    if (collection && mode) {
+      return { collection, mode };
     }
-  }
-  
-  // Try to find URLs in the object (recursively search for strings that look like URLs)
-  function findUrlsInObject(obj, path = '') {
-    if (typeof obj === 'string' && obj.includes('format=style-dictionary')) {
-      urls.push(obj);
-    } else if (typeof obj === 'object' && obj !== null) {
-      for (const key in obj) {
-        findUrlsInObject(obj[key], `${path}.${key}`);
+    
+    // If parameters aren't available, we'll use generic detection
+    // without any hardcoded brand names or collection types
+    
+    // Extract collection and mode from path segments if possible
+    const urlPath = urlObj.pathname.toLowerCase();
+    const urlParts = urlPath.split('/').filter(part => part.length > 0);
+    
+    // Look for collection or mode indicators in the path or parameters
+    // without assuming specific collection or mode names
+    for (let i = 0; i < urlParts.length; i++) {
+      if (urlParts[i].includes('collection')) {
+        collection = urlParts[i+1] || 'unknown-collection';
+      }
+      if (urlParts[i].includes('mode')) {
+        mode = urlParts[i+1] || 'unknown-mode';
       }
     }
-  }
-  
-  findUrlsInObject(data);
-  return urls;
-}
-
-// Main function to fetch all tokens, apply transforms and merge them
-async function mergeAllTokens() {
-  try {
-    // First, fetch the list of token URLs
-    const tokenUrls = await fetchTokenUrls();
     
-    if (!tokenUrls || tokenUrls.length === 0) {
-      throw new Error('No token URLs found');
+    // If we still don't have values, use generic identifiers
+    if (!collection) {
+      collection = `collection-${params.get('collection_id') || 'unknown'}`;
     }
     
-    console.log('Starting to fetch token sets...');
+    if (!mode) {
+      mode = `mode-${params.get('mode_id') || 'unknown'}`;
+    }
+    
+    return { collection, mode };
+  } catch (error) {
+    console.warn(`Error parsing collection and mode from URL: ${url}`);
+    return { collection: 'unknown', mode: 'unknown' };
+  }
+}
+
+// Function to infer collection and mode from token data
+function inferCollectionAndMode(data, url) {
+  // Try to detect collection type from data structure
+  let collection = 'unknown';
+  let mode = 'unknown';
+  
+  // Extract any hints from the URL
+  const urlString = url.toLowerCase();
+  
+  // Check for typical structures in each collection type
+  if (data.colors?.brand) {
+    collection = 'brand';
+    
+    // Try to extract mode from URL without hardcoding specific brand names
+    // This extracts whatever mode name appears in the URL
+    const modeMatch = urlString.match(/[&?]mode_name=([^&]+)/i);
+    if (modeMatch && modeMatch[1]) {
+      mode = modeMatch[1];
+    }
+  } else if (data.bg?.brand) {
+    collection = 'theme';
+    
+    // Check if it's light or dark theme generically
+    if (urlString.includes('light')) {
+      mode = 'light';
+    } else if (urlString.includes('dark')) {
+      mode = 'dark';
+    }
+    
+    // Also check if the data has a mode property
+    if (data.bg?.mode) {
+      mode = data.bg.mode;
+    }
+  } else if (data.colors) {
+    collection = 'globals';
+    mode = 'value'; // Default for globals
+    
+    // Look for mode in URL
+    const modeMatch = urlString.match(/[&?]mode_name=([^&]+)/i);
+    if (modeMatch && modeMatch[1]) {
+      mode = modeMatch[1];
+    }
+  }
+  
+  return { collection, mode };
+}
+
+// Function to fetch and classify each token set
+async function fetchTokens(url) {
+  try {
+    console.log(`Fetching from: ${url}`);
+    const response = await axios.get(url);
+    
+    // First try to get collection and mode from URL
+    let { collection, mode } = parseCollectionAndMode(url);
+    
+    // If we couldn't determine from URL, try to infer from the data
+    if (collection === 'unknown' || mode === 'unknown' || 
+        collection.startsWith('collection-') || mode.startsWith('mode-')) {
+      const inferred = inferCollectionAndMode(response.data, url);
+      
+      if (collection === 'unknown' || collection.startsWith('collection-')) {
+        collection = inferred.collection;
+      }
+      
+      if (mode === 'unknown' || mode.startsWith('mode-')) {
+        mode = inferred.mode;
+      }
+      
+      console.log(`Inferred collection "${collection}" and mode "${mode}" from data and URL`);
+    } else {
+      console.log(`Parsed collection "${collection}" and mode "${mode}" from URL`);
+    }
+    
+    return {
+      data: response.data,
+      collection,
+      mode,
+      url // Keep the URL for reference
+    };
+  } catch (error) {
+    console.error(`Error fetching from ${url}:`, error.message);
+    return null;
+  }
+}
+
+// Apply the appropriate transform method
+function applyTransforms(tokens) {
+  if (typeof sdTransforms === 'function') {
+    return sdTransforms(tokens);
+  } else if (sdTransforms.default && typeof sdTransforms.default === 'function') {
+    return sdTransforms.default(tokens);
+  } else if (sdTransforms.transform && typeof sdTransforms.transform === 'function') {
+    return sdTransforms.transform(tokens);
+  } else {
+    console.log('No transform method found in sd-transforms. Using tokens without transformation.');
+    return tokens;
+  }
+}
+
+// Main function to process all tokens
+async function processTokens() {
+  try {
+    // Get the token URLs
+    const tokenUrls = await fetchTokenUrls();
+    console.log('Starting to fetch and process token sets...');
     
     // Fetch all token sets
-    const tokenSets = await Promise.all(tokenUrls.map(url => fetchTokens(url)));
-    console.log(`Fetched ${tokenSets.length} token sets in total`);
+    const tokenSets = [];
+    for (const url of tokenUrls) {
+      const tokenSet = await fetchTokens(url);
+      if (tokenSet) tokenSets.push(tokenSet);
+    }
     
-    const validTokenSets = tokenSets.filter(set => set !== null);
-    console.log(`${validTokenSets.length} valid token sets out of ${tokenSets.length}`);
+    console.log(`Successfully fetched ${tokenSets.length} token sets`);
     
-    if (validTokenSets.length === 0) {
+    if (tokenSets.length === 0) {
       throw new Error('No valid token sets were fetched');
     }
     
-    // Create a merged token structure
-    // Instead of merging brands together, we'll create separate outputs for each brand
-    const brandModes = validTokenSets.filter(set => set.collection === 'brand').map(set => set.mode);
-    console.log(`Found brand modes: ${brandModes.join(', ')}`);
-    
-    // Get the global and theme tokens
-    const globalsTokens = validTokenSets.find(set => set.collection === 'globals')?.data || {};
-    const lightThemeTokens = validTokenSets.find(set => set.collection === 'theme' && set.mode === 'light')?.data || {};
-    const darkThemeTokens = validTokenSets.find(set => set.collection === 'theme' && set.mode === 'dark')?.data || {};
-    
-    // Process each brand separately
-    for (const brandMode of brandModes) {
-      console.log(`Processing brand: ${brandMode}`);
-      
-      const brandTokens = validTokenSets.find(set => set.collection === 'brand' && set.mode === brandMode)?.data || {};
-      
-      // Create the merged structure for this brand
-      const mergedBrandTokens = {
-        globals: globalsTokens,
-        brand: brandTokens,
-        theme: {
-          light: lightThemeTokens,
-          dark: darkThemeTokens
-        }
-      };
-      
-      // Apply transforms (using the method that works)
-      console.log(`Applying transforms for ${brandMode}...`);
-      let transformedTokens;
-      
-      if (typeof sdTransforms === 'function') {
-        transformedTokens = sdTransforms(mergedBrandTokens);
-      } else if (sdTransforms.default && typeof sdTransforms.default === 'function') {
-        transformedTokens = sdTransforms.default(mergedBrandTokens);
-      } else if (sdTransforms.transform && typeof sdTransforms.transform === 'function') {
-        transformedTokens = sdTransforms.transform(mergedBrandTokens);
-      } else {
-        console.log('Could not find appropriate transform method. Using merged tokens without transformation.');
-        transformedTokens = mergedBrandTokens;
+    // Group by collection and mode
+    const collections = {};
+    tokenSets.forEach(set => {
+      if (!collections[set.collection]) {
+        collections[set.collection] = {};
       }
-      
-      // Save the result for this brand
-      const outputDir = path.resolve('./output');
-      if (!fs.existsSync(outputDir)) {
-        fs.mkdirSync(outputDir);
-      }
-      
-      fs.writeFileSync(
-        path.join(outputDir, `${brandMode}-tokens.json`),
-        JSON.stringify(transformedTokens, null, 2)
-      );
-      
-      console.log(`Saved tokens for ${brandMode} to ${path.join(outputDir, `${brandMode}-tokens.json`)}`);
-    }
+      collections[set.collection][set.mode] = set.data;
+    });
     
-    // Save the merged and transformed result
+    console.log('Collections found:', Object.keys(collections).join(', '));
+    
+    // Create output directory
     const outputDir = path.resolve('./output');
     if (!fs.existsSync(outputDir)) {
       fs.mkdirSync(outputDir);
     }
     
-    // Also create a combined file with all brands (for reference)
-    const allBrands = {};
-    brandModes.forEach(brandMode => {
-      const brandData = validTokenSets.find(set => set.collection === 'brand' && set.mode === brandMode)?.data || {};
-      allBrands[brandMode] = brandData;
-    });
-    
-    const allTokens = {
-      globals: globalsTokens,
-      brands: allBrands,
-      theme: {
-        light: lightThemeTokens,
-        dark: darkThemeTokens
+    // Process brand-specific outputs
+    if (collections.brand) {
+      const brandModes = Object.keys(collections.brand);
+      console.log(`Processing ${brandModes.length} brands: ${brandModes.join(', ')}`);
+      
+      // For each brand, create a merged token set with globals and theme
+      for (const brandMode of brandModes) {
+        console.log(`Creating tokens for brand: ${brandMode}`);
+        
+        const brandTokens = collections.brand[brandMode];
+        const globalsTokens = collections.globals?.value || {};
+        const themeTokens = {
+          light: collections.theme?.light || {},
+          dark: collections.theme?.dark || {}
+        };
+        
+        // Merge tokens for this brand
+        const mergedTokens = {
+          globals: globalsTokens,
+          brand: brandTokens,
+          theme: themeTokens
+        };
+        
+        // Apply transforms
+        console.log(`Applying transforms for ${brandMode}...`);
+        const transformedTokens = applyTransforms(mergedTokens);
+        
+        // Save to file
+        fs.writeFileSync(
+          path.join(outputDir, `${brandMode}-tokens.json`),
+          JSON.stringify(transformedTokens, null, 2)
+        );
+        
+        console.log(`Saved ${brandMode} tokens to ${path.join(outputDir, `${brandMode}-tokens.json`)}`);
       }
-    };
+      
+      // Also create a combined reference file
+      const allTokens = {
+        globals: collections.globals?.value || {},
+        brands: collections.brand,
+        theme: {
+          light: collections.theme?.light || {},
+          dark: collections.theme?.dark || {}
+        }
+      };
+      
+      fs.writeFileSync(
+        path.join(outputDir, 'all-tokens.json'),
+        JSON.stringify(allTokens, null, 2)
+      );
+      
+      console.log(`Saved combined reference to ${path.join(outputDir, 'all-tokens.json')}`);
+    } else {
+      // If no brand collections were found, just save what we have
+      console.log('No brand collections found. Saving all collections as-is.');
+      
+      fs.writeFileSync(
+        path.join(outputDir, 'all-tokens.json'),
+        JSON.stringify(collections, null, 2)
+      );
+      
+      console.log(`Saved all tokens to ${path.join(outputDir, 'all-tokens.json')}`);
+    }
     
-    fs.writeFileSync(
-      path.join(outputDir, 'all-tokens.json'),
-      JSON.stringify(allTokens, null, 2)
-    );
-    
-    console.log(`Also saved combined reference file to ${path.join(outputDir, 'all-tokens.json')}`);
-    
-    console.log('Successfully processed all token sets!');
-    console.log(`Output saved to ${outputDir}`);
+    console.log('Token processing completed successfully!');
     
   } catch (error) {
-    console.error('Error merging tokens:', error.message);
+    console.error('Error processing tokens:', error.message);
+    process.exit(1); // Exit with error code
   }
 }
 
-// Run the script
-mergeAllTokens();
+// Run the main function
+processTokens();
