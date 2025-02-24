@@ -2,7 +2,6 @@ import { promises as fs } from "fs";
 import fetch from "node-fetch";
 import path from "path";
 import { fileURLToPath } from "url";
-import StyleDictionary from "style-dictionary";
 import { register } from "@tokens-studio/sd-transforms";
 import { extractCollectionAndMode, extractCollectionModes } from "./utils.js";
 
@@ -11,9 +10,6 @@ const __dirname = path.dirname(__filename);
 
 const styleDictionaryURL =
   "https://e-boks.zeroheight.com/api/token_management/token_set/10617/style_dictionary_links";
-
-// ✅ Register @tokens-studio/sd-transforms BEFORE using Style Dictionary
-register(StyleDictionary);
 
 /**
  * Fetches links for each collection and mode
@@ -145,7 +141,13 @@ async function fileExists(filePath) {
     return;
   }
 
-  // ✅ Use `configure()` instead of `create()`
+  // ✅ Dynamically import Style Dictionary to support ESM
+  const StyleDictionary = (await import("style-dictionary")).default;
+  
+  // ✅ Register Tokens Studio transforms
+  register(StyleDictionary);
+
+  // ✅ Use `extend()` to initialize Style Dictionary
   const SD = StyleDictionary.extend(getStyleDictionaryConfig());
   SD.buildAllPlatforms();
 
