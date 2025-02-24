@@ -18,26 +18,22 @@ const styleDictionaryURL =
  */
 async function fetchLinks() {
   try {
-    /** styleDictionaryURL value is generated per a token set at zeroheight.
-     *
-     * If you generate a private link, you need to generate access token and add additional headers to the request
-     * X-API-CLIENT
-     * X-API-KEY
-     *
-     * Learn more: https://zeroheight.com/help/article/documenting-figma-color-variables/
-     */
     const response = await fetch(styleDictionaryURL);
-    const textResponse = await response.text();
-    const links = textResponse.split("\n");
+    if (!response.ok) throw new Error(`Failed to fetch links: ${response.statusText}`);
 
+    const textResponse = await response.text();
+    const links = textResponse.split("\n").filter(link => link.trim() !== ""); // Remove empty lines
+
+    console.log("✅ Links fetched:", links);
     return links;
   } catch (error) {
     console.error("❗️Error fetching links:", error);
+    return [];
   }
 }
 
 /**
- * Iterates links, fetches Style Dictionary JSON files and saves them
+ * Iterates links, fetches Style Dictionary JSON files, and saves them
  *
  * @param {string[]} links
  */
@@ -45,34 +41,36 @@ async function saveFiles(links) {
   try {
     for (const link of links) {
       const response = await fetch(link);
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch from ${link}: ${response.statusText}`);
-      }
+      if (!response.ok) throw new Error(`Failed to fetch JSON from ${link}: ${response.statusText}`);
 
       const jsonData = await response.json();
-
       const [collection, mode] = extractCollectionAndMode(link);
-      const directory = path.join(__dirname, "json", collection);
 
+      if (!collection || !mode) {
+        console.warn(`⚠️ Skipping invalid URL: ${link}`);
+        continue;
+      }
+
+      const directory = path.join(__dirname, "json", collection);
       await fs.mkdir(directory, { recursive: true });
 
       const fileName = `${mode}.json`;
       const filePath = path.join(directory, fileName);
-
       await fs.writeFile(filePath, JSON.stringify(jsonData, null, 2));
+
+      console.log(`✅ Saved: ${filePath}`);
     }
   } catch (error) {
-    console.error("❗️Error:", error);
+    console.error("❗️Error saving files:", error);
   }
 }
 
 /**
  * Returns Style Dictionary config
  *
- * @param {string} mode1
- * @param {string} mode2
- * @returns {json} Style Dictionary config
+ * @param {string} mode1 - First mode (e.g., "light", "dark")
+ * @param {string} mode2 - Second mode (e.g., "eboks", "postnl")
+ * @returns {object} Style Dictionary config
  */
 function getStyleDictionaryConfig(mode1, mode2) {
   const buildDir = [mode1, mode2].join("_");
@@ -109,41 +107,46 @@ function getStyleDictionaryConfig(mode1, mode2) {
  */
 (async () => {
   const links = await fetchLinks();
-  
-  if (!links || links.length === 0) {
-    console.error("❗️No links found");
+  if (!links.length) {
+    console.error("❗️No links found, exiting...");
     return;
   }
-  
-  console.log("Links found:", links); // Add this debug line
-  
+
   await saveFiles(links);
 
   const collectionModes = extractCollectionModes(links);
-  console.log("Collection modes:", collectionModes); // Add this debug line
-  
-  // Check if collections exist
-  if (!collectionModes || !collectionModes.brand) {
-    console.error("❗️No token collections found");
-    return;
-  }
+  console.log("✅ Collection modes extracted:", collectionModes);
 
-  const tokensCollectionModes = collectionModes.brand || [];
-  const primitivesCollectionModes = collectionModes.theme || [];
+  const brandModes = collectionModes.brand || [];
+  const themeModes = collectionModes.theme || [];
   const platforms = ["web", "ios"];
 
   console.log("\n🚀 Build started...");
-  console.log("Token modes:", tokensCollectionModes);
-  console.log("Primitive modes:", primitivesCollectionModes);
+  console.log("🎨 Theme Modes:", themeModes);
+  console.log("🏢 Brand Modes:", brandModes);
 
-  if (tokensCollectionModes.length > 0) {
-    tokensCollectionModes.forEach((m1) => {
-      primitivesCollectionModes.forEach((m2) => {
-        platforms.forEach((platform) => {
-          const sd = new StyleDictionary(getStyleDictionaryConfig(m1, m2));
-          sd.buildPlatform(platform);
-        });
+  if (themeModes.length === 0 || brandModes.length === 0) {
+    console.error("❗️Missing theme or brand modes, cannot continue.");
+    return;
+  }
+
+  // Ensure files exist before running Style Dictionary
+  themeModes.forEach((themeMode) => {
+    brandModes.forEach((brandMode) => {
+      platforms.forEach((platform) => {
+        const themeFile = `json/theme/${themeMode}.json`;
+        const brandFile = `json/brand/${brandMode}.json`;
+
+        if (!fs.existsSync(themeFile) || !fs.existsSync(brandFile)) {
+          console.error(`❗️Missing files: ${themeFile} or ${brandFile}`);
+          return;
+        }
+
+        const sd = new StyleDictionary(getStyleDictionaryConfig(themeMode, brandMode));
+        sd.buildPlatform(platform);
       });
     });
-  }
+  });
+
+  console.log("✅ Style Dictionary build completed!");
 })();
