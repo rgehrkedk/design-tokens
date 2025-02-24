@@ -1,19 +1,20 @@
 
-    // Direct import of Core module
-    import { Core } from 'style-dictionary/lib/Core.js';
+    // ESM bridge for Style Dictionary
+    import StyleDictionary from 'style-dictionary';
     import { register } from '@tokens-studio/sd-transforms';
     
+    // Register the transforms
+    register(StyleDictionary);
+    
     // Export a function to build tokens
-    export async function buildTokens(config) {
-      // Create a new Core instance with our config
-      const styleDictionary = new Core(config);
-      
-      // Register transforms
-      register(styleDictionary);
-      
-      // Build all platforms
-      styleDictionary.buildAllPlatforms();
-      
-      return true;
+    export function buildTokens(config) {
+      try {
+        const dictionary = StyleDictionary.extend(config);
+        dictionary.buildAllPlatforms();
+        return true;
+      } catch (error) {
+        console.error('Error in Style Dictionary build:', error);
+        return false;
+      }
     }
     

@@ -1,19 +1,13 @@
 {
-  "name": "style-directory-example",
-  "version": "1.0.0",
-  "description": "Example usage of zeroheight links to feed Style Dictionary",
-  "type": "module",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "node index.js"
-  },
-  "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "@tokens-studio/sd-transforms": "^1.2.9",
-    "chokidar": "^4.0.3",
-    "node-fetch": "^3.3.2",
-    "style-dictionary": "^4.3.3"
+    "name": "design-tokens-merger",
+    "version": "1.0.0",
+    "description": "Merges design tokens from multiple sources using style dictionary transforms",
+    "main": "merge-tokens.js",
+    "scripts": {
+      "start": "node merge-tokens.js"
+    },
+    "dependencies": {
+      "@tokens-studio/sd-transforms": "^0.11.3",
+      "axios": "^1.6.2"
+    }
   }
-}
