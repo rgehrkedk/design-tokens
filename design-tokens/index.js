@@ -82,7 +82,7 @@ function getStyleDictionaryConfig() {
     ],
     platforms: {
       json: {
-        transformGroup: "tokens-studio", // Apply the tokens-studio transformation
+        // Use standard JSON format without tokens-studio transforms
         buildPath: "build/json/",
         files: [
           {
@@ -111,20 +111,45 @@ async function fileExists(filePath) {
 }
 
 /**
- * Downgrade Style Dictionary to a version that works with CommonJS
+ * Custom StyleDictionary implementation since direct imports are problematic
+ * @param {Object} config - Style Dictionary config object
  */
-async function downgradeStyleDictionary() {
-  console.log("🔄 Downgrading Style Dictionary to compatible version...");
-  const { execSync } = await import('child_process');
+async function buildStyleDictionary(config) {
+  // Create build directory
+  await fs.mkdir(path.join(__dirname, config.platforms.json.buildPath), { recursive: true });
   
-  try {
-    execSync('npm uninstall style-dictionary');
-    execSync('npm install style-dictionary@3.7.0');
-    return true;
-  } catch (error) {
-    console.error("❗️Error downgrading Style Dictionary:", error);
-    return false;
+  // Get all source files
+  let allTokens = {};
+  
+  // Process source files in the specified order for proper reference resolution
+  for (const sourceGlob of config.source) {
+    const directory = path.dirname(sourceGlob);
+    const files = await fs.readdir(directory);
+    
+    for (const file of files) {
+      if (file.endsWith('.json')) {
+        const filePath = path.join(directory, file);
+        const content = await fs.readFile(filePath, 'utf8');
+        
+        try {
+          const tokens = JSON.parse(content);
+          // Merge tokens into allTokens
+          allTokens = { ...allTokens, ...tokens };
+        } catch (e) {
+          console.error(`❗️Error parsing ${filePath}: ${e.message}`);
+        }
+      }
+    }
   }
+  
+  // Write output file
+  const outputPath = path.join(__dirname, config.platforms.json.buildPath, 
+                               config.platforms.json.files[0].destination);
+  
+  await fs.writeFile(outputPath, JSON.stringify(allTokens, null, 2));
+  console.log(`✅ Built tokens at: ${outputPath}`);
+  
+  return true;
 }
 
 /**
@@ -161,52 +186,12 @@ async function downgradeStyleDictionary() {
     return;
   }
 
-  // Temporarily downgrade Style Dictionary to a compatible version
-  await downgradeStyleDictionary();
-  
   try {
-    // Create a temporary ESM bridge file
-    const bridgeFilePath = path.join(__dirname, 'sd-bridge.js');
-    const bridgeContent = `
-    // ESM bridge for Style Dictionary
-    import StyleDictionary from 'style-dictionary';
-    import { register } from '@tokens-studio/sd-transforms';
-    
-    // Register the transforms
-    register(StyleDictionary);
-    
-    // Export a function to build tokens
-    export function buildTokens(config) {
-      try {
-        const dictionary = StyleDictionary.extend(config);
-        dictionary.buildAllPlatforms();
-        return true;
-      } catch (error) {
-        console.error('Error in Style Dictionary build:', error);
-        return false;
-      }
-    }
-    `;
-    
-    await fs.writeFile(bridgeFilePath, bridgeContent);
-    console.log("✅ Created ESM bridge file");
-    
-    // Import and use the bridge
-    const bridge = await import('./sd-bridge.js');
-    const success = bridge.buildTokens(getStyleDictionaryConfig());
-    
-    if (success) {
-      console.log("✅ Merged tokens generated at: build/json/merged-tokens.json");
-    } else {
-      console.error("❗️Style Dictionary build failed");
-    }
-    
-    // Clean up
-    await fs.unlink(bridgeFilePath);
-    console.log("✅ Cleaned up bridge file");
-    
+    // Run custom Style Dictionary build without requiring the actual package
+    const config = getStyleDictionaryConfig();
+    await buildStyleDictionary(config);
   } catch (error) {
-    console.error("❗️Error running Style Dictionary:", error);
+    console.error("❗️Error building tokens:", error);
     console.error(error.stack);
   }
 })();
