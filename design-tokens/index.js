@@ -142,7 +142,8 @@ async function fileExists(filePath) {
   }
 
   // ✅ Dynamically import Style Dictionary to support ESM
-  const StyleDictionary = (await import("style-dictionary")).default;
+  const StyleDictionary = (await import("style-dictionary"));
+  console.log("DEBUG: StyleDictionary import", StyleDictionary);
 
   // ✅ Register Tokens Studio transforms
   register(StyleDictionary);
