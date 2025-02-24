@@ -146,7 +146,7 @@ async function fileExists(filePath) {
   }
 
   // ✅ Use `configure()` instead of `create()`
-  const SD = StyleDictionary.configure(getStyleDictionaryConfig());
+  const SD = StyleDictionary.extend(getStyleDictionaryConfig());
   SD.buildAllPlatforms();
 
   console.log("✅ Merged tokens generated at: build/json/merged-tokens.json");
