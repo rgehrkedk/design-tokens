@@ -2,8 +2,11 @@ import { promises as fs } from "fs";
 import fetch from "node-fetch";
 import path from "path";
 import { fileURLToPath } from "url";
-import { register } from "@tokens-studio/sd-transforms";
+import { createRequire } from "module";
 import { extractCollectionAndMode, extractCollectionModes } from "./utils.js";
+
+// Create a require function to import CommonJS modules
+const require = createRequire(import.meta.url);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -141,35 +144,40 @@ async function fileExists(filePath) {
   }
 
   try {
-    // Dynamically import a new module that imports Style Dictionary properly
-    // This is the cleanest workaround for ESM/Style Dictionary issues
-    
-    // Create a temporary file that will import Style Dictionary
-    const tempFilePath = path.join(__dirname, 'temp-style-dictionary.js');
-    const tempFileContent = `
-    import StyleDictionary from 'style-dictionary';
-    export default StyleDictionary;
+    // Create the bridge file
+    const bridgeFilePath = path.join(__dirname, 'sd-bridge.cjs');
+    const bridgeContent = `
+    const StyleDictionary = require('style-dictionary');
+    const transforms = require('@tokens-studio/sd-transforms');
+
+    // Register transforms
+    transforms.register(StyleDictionary);
+
+    // Export what we need
+    module.exports = {
+      // Create a function that builds tokens
+      buildTokens: function(config) {
+        const dictionary = StyleDictionary.extend(config);
+        dictionary.buildAllPlatforms();
+        return true;
+      }
+    };
     `;
-    await fs.writeFile(tempFilePath, tempFileContent);
+    await fs.writeFile(bridgeFilePath, bridgeContent);
+    console.log("✅ Created CommonJS bridge file");
+
+    // Use the bridge to build tokens
+    const config = getStyleDictionaryConfig();
+    const sdBridge = require('./sd-bridge.cjs');
     
-    // Import our temp file which correctly imports Style Dictionary
-    const StyleDictionary = (await import('./temp-style-dictionary.js')).default;
-    
-    // Register transformations
-    register(StyleDictionary);
-    
-    // Create a style dictionary instance using extend
-    const dictionary = StyleDictionary.extend(getStyleDictionaryConfig());
-    
-    // Build all platforms
-    dictionary.buildAllPlatforms();
-    
-    // Clean up temp file
-    await fs.unlink(tempFilePath);
-    
+    sdBridge.buildTokens(config);
     console.log("✅ Merged tokens generated at: build/json/merged-tokens.json");
+    
+    // Clean up the bridge file
+    await fs.unlink(bridgeFilePath);
+    console.log("✅ Cleaned up bridge file");
   } catch (error) {
     console.error("❗️Error building tokens:", error);
-    console.log("Error details:", error.stack);
+    console.error("Stack trace:", error.stack);
   }
 })();
