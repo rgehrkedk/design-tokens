@@ -3,6 +3,10 @@ import fetch from "node-fetch";
 import path from "path";
 import { fileURLToPath } from "url";
 import { extractCollectionAndMode, extractCollectionModes } from "./utils.js";
+import { createRequire } from "module";
+
+// Use createRequire for importing Style Dictionary in ESM context
+const require = createRequire(import.meta.url);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -65,61 +69,34 @@ async function saveFiles(links) {
 }
 
 /**
- * Manually merge all tokens into a single file
- * 
- * @param {Object} options - Options object
- * @param {string[]} options.themeModes - List of theme modes
- * @param {string[]} options.brandModes - List of brand modes 
- * @param {string[]} options.globalsModes - List of globals modes
+ * Returns Style Dictionary config with the correct token order
+ * for proper reference resolution:
+ * 1. globals (foundational values)
+ * 2. brand (brand-specific tokens that might reference globals)
+ * 3. theme (context-specific tokens that might reference globals and brand)
+ *
+ * @returns {object} Style Dictionary config
  */
-async function manuallyMergeTokens({ themeModes, brandModes, globalsModes }) {
-  try {
-    // Create build directory
-    const buildPath = path.join(__dirname, "build", "json");
-    await fs.mkdir(buildPath, { recursive: true });
-    
-    const mergedTokens = {};
-    
-    // Load and merge theme files
-    for (const mode of themeModes) {
-      const filePath = path.join(__dirname, "json", "theme", `${mode}.json`);
-      const content = await fs.readFile(filePath, "utf8");
-      const tokens = JSON.parse(content);
-      
-      // Add tokens to merged object
-      Object.assign(mergedTokens, tokens);
-    }
-    
-    // Load and merge brand files
-    for (const mode of brandModes) {
-      const filePath = path.join(__dirname, "json", "brand", `${mode}.json`);
-      const content = await fs.readFile(filePath, "utf8");
-      const tokens = JSON.parse(content);
-      
-      // Add tokens to merged object
-      Object.assign(mergedTokens, tokens);
-    }
-    
-    // Load and merge globals files
-    for (const mode of globalsModes) {
-      const filePath = path.join(__dirname, "json", "globals", `${mode}.json`);
-      const content = await fs.readFile(filePath, "utf8");
-      const tokens = JSON.parse(content);
-      
-      // Add tokens to merged object
-      Object.assign(mergedTokens, tokens);
-    }
-    
-    // Save merged tokens
-    const outputPath = path.join(buildPath, "merged-tokens.json");
-    await fs.writeFile(outputPath, JSON.stringify(mergedTokens, null, 2));
-    
-    console.log(`✅ Manually merged tokens saved to: ${outputPath}`);
-    return true;
-  } catch (error) {
-    console.error("❗️Error merging tokens:", error);
-    return false;
-  }
+function getStyleDictionaryConfig() {
+  return {
+    source: [
+      "json/globals/*.json", // Globals first - foundational tokens
+      "json/brand/*.json",   // Brand second - might reference globals
+      "json/theme/*.json",   // Theme last - might reference both globals and brand
+    ],
+    platforms: {
+      json: {
+        transformGroup: "tokens-studio", // Apply the tokens-studio transformation
+        buildPath: "build/json/",
+        files: [
+          {
+            destination: "merged-tokens.json",
+            format: "json",
+          },
+        ],
+      },
+    },
+  };
 }
 
 /**
@@ -152,16 +129,17 @@ async function fileExists(filePath) {
   const collectionModes = extractCollectionModes(links);
   console.log("✅ Collection modes extracted:", collectionModes);
 
+  // Note the correct ordering here for proper reference resolution
+  const globalsModes = collectionModes.globals || [];
   const brandModes = collectionModes.brand || [];
   const themeModes = collectionModes.theme || [];
-  const globalsModes = collectionModes.globals || [];
 
   console.log("\n🚀 Build started...");
-  console.log("🎨 Theme Modes:", themeModes);
-  console.log("🏢 Brand Modes:", brandModes);
-  console.log("🌍 Globals Mode:", globalsModes);
+  console.log("🌍 Globals Mode:", globalsModes);  // Globals first
+  console.log("🏢 Brand Modes:", brandModes);     // Brand second
+  console.log("🎨 Theme Modes:", themeModes);     // Theme last
 
-  // Ensure that at least one global token file exists
+  // Ensure that required files exist
   const globalsFile = "json/globals/value.json";
   const globalsExists = await fileExists(globalsFile);
 
@@ -170,6 +148,75 @@ async function fileExists(filePath) {
     return;
   }
 
-  // Skip Style Dictionary entirely and just manually merge the tokens
-  await manuallyMergeTokens({ themeModes, brandModes, globalsModes });
+  try {
+    // Create the CJS bridge file
+    const bridgeFilePath = path.join(__dirname, 'sd-bridge.cjs');
+    const bridgeContent = `
+    // This is a CommonJS bridge file for Style Dictionary
+    const StyleDictionary = require('style-dictionary');
+    const TokenStudioTransforms = require('@tokens-studio/sd-transforms');
+
+    // Register the tokens-studio transforms to Style Dictionary
+    TokenStudioTransforms.register(StyleDictionary);
+
+    // Export a function to build tokens using Style Dictionary
+    module.exports = function buildTokens(config) {
+      try {
+        // Create Style Dictionary instance
+        const styleDictionary = StyleDictionary.extend(config);
+        
+        // Build all platforms
+        styleDictionary.buildAllPlatforms();
+        
+        return true;
+      } catch (error) {
+        console.error('Error in Style Dictionary build:', error);
+        return false;
+      }
+    };
+    `;
+    
+    await fs.writeFile(bridgeFilePath, bridgeContent);
+    console.log("✅ Created CommonJS bridge file for Style Dictionary");
+    
+    // Create package.json that marks sd-bridge.cjs as CommonJS
+    const packageJsonPath = path.join(__dirname, 'package-temp.json');
+    const packageJsonContent = {
+      "name": "style-dictionary-bridge",
+      "version": "1.0.0",
+      "type": "module",
+      "imports": {
+        "#internal/bridge": "./sd-bridge.cjs"
+      }
+    };
+    
+    await fs.writeFile(packageJsonPath, JSON.stringify(packageJsonContent, null, 2));
+    console.log("✅ Created temporary package.json for module resolution");
+    
+    // Use the bridge
+    try {
+      const buildTokens = require('./sd-bridge.cjs');
+      const success = buildTokens(getStyleDictionaryConfig());
+      
+      if (success) {
+        console.log("✅ Merged tokens generated at: build/json/merged-tokens.json");
+      } else {
+        console.error("❗️Style Dictionary build failed");
+      }
+    } catch (error) {
+      console.error("❗️Error running Style Dictionary:", error);
+    }
+    
+    // Clean up
+    try {
+      await fs.unlink(bridgeFilePath);
+      await fs.unlink(packageJsonPath);
+      console.log("✅ Cleaned up temporary files");
+    } catch (cleanupError) {
+      console.warn("⚠️ Could not clean up temporary files:", cleanupError);
+    }
+  } catch (error) {
+    console.error("❗️Error in main process:", error);
+    console.error(error.stack);
+  }
 })();
