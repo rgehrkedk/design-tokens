@@ -143,11 +143,11 @@ async function fileExists(filePath) {
     return;
   }
 
-  // ✅ Register Tokens Studio transforms (Fix: No preprocessor registration)
+  // ✅ Register Tokens Studio transforms
   register(StyleDictionary);
 
-  // ✅ Use `.extend()` with Style Dictionary v4.3.3
-  const SD = StyleDictionary.extend(getStyleDictionaryConfig());
+  // ✅ Use `.create()` with Style Dictionary v4+
+  const SD = StyleDictionary.create(getStyleDictionaryConfig());
   SD.buildAllPlatforms();
 
   console.log("✅ Merged tokens generated at: build/json/merged-tokens.json");
