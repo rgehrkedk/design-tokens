@@ -145,8 +145,8 @@ async function fileExists(filePath) {
     return;
   }
 
-  // Merge all tokens into one JSON file using Style Dictionary
-  const SD = StyleDictionary.extend(getStyleDictionaryConfig());
+  // ✅ Use `StyleDictionary.create()` instead of `extend()`
+  const SD = StyleDictionary.create(getStyleDictionaryConfig());
   SD.buildPlatform("json");
 
   console.log("✅ Merged tokens generated at: build/json/merged-tokens.json");
