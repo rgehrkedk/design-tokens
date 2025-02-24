@@ -143,12 +143,12 @@ async function fileExists(filePath) {
 
   // ✅ Dynamically import Style Dictionary to support ESM
   const StyleDictionary = (await import("style-dictionary")).default;
-  
+
   // ✅ Register Tokens Studio transforms
   register(StyleDictionary);
 
-  // ✅ Use `extend()` to initialize Style Dictionary
-  const SD = StyleDictionary.extend(getStyleDictionaryConfig());
+  // ✅ Use `StyleDictionary.default.extend()` for ESM compatibility
+  const SD = StyleDictionary.default.extend(getStyleDictionaryConfig());
   SD.buildAllPlatforms();
 
   console.log("✅ Merged tokens generated at: build/json/merged-tokens.json");
