@@ -5,7 +5,7 @@ import { fileURLToPath } from "url";
 import { register } from "@tokens-studio/sd-transforms";
 import { extractCollectionAndMode, extractCollectionModes } from "./utils.js";
 
-// ✅ Import Style Dictionary Correctly in ESM
+// Import Style Dictionary in ESM format
 const StyleDictionary = (await import("style-dictionary")).default;
 
 const __filename = fileURLToPath(import.meta.url);
@@ -143,11 +143,11 @@ async function fileExists(filePath) {
     return;
   }
 
-  // ✅ Register Tokens Studio transforms
+  // Register Tokens Studio transforms
   register(StyleDictionary);
 
-  // ✅ Use `configure()` with Style Dictionary v4+
-  const SD = StyleDictionary.configure(getStyleDictionaryConfig());
+  // Use extend() instead of configure() for compatibility with older versions
+  const SD = StyleDictionary.extend(getStyleDictionaryConfig());
   SD.buildAllPlatforms();
 
   console.log("✅ Merged tokens generated at: build/json/merged-tokens.json");
