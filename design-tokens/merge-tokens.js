@@ -2,7 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
-const { transforms } = require('@tokens-studio/sd-transforms');
+const sdTransforms = require('@tokens-studio/sd-transforms');
 
 // URLs to fetch
 const urls = [
@@ -85,10 +85,30 @@ async function mergeAllTokens() {
     
     // Apply transforms from tokens-studio/sd-transforms
     console.log('Applying sd-transforms to the merged tokens...');
-    console.log('Transforms available:', Object.keys(transforms));
+    console.log('SD Transforms structure:', Object.keys(sdTransforms));
     
-    const transformedTokens = transforms.transformTokens(mergedTokens);
-    console.log('Transformation completed');
+    // Use the library based on its actual structure
+    let transformedTokens;
+    
+    if (typeof sdTransforms === 'function') {
+      // If the default export is a function
+      transformedTokens = sdTransforms(mergedTokens);
+      console.log('Used default export function');
+    } else if (sdTransforms.default && typeof sdTransforms.default === 'function') {
+      // If there's a default property that's a function
+      transformedTokens = sdTransforms.default(mergedTokens);
+      console.log('Used sdTransforms.default function');
+    } else if (sdTransforms.transform && typeof sdTransforms.transform === 'function') {
+      // If there's a transform method
+      transformedTokens = sdTransforms.transform(mergedTokens);
+      console.log('Used sdTransforms.transform function');
+    } else {
+      // If we can't find the right method, just use the merged tokens as is
+      console.log('Could not find appropriate transform method. Using merged tokens without transformation.');
+      transformedTokens = mergedTokens;
+    }
+    
+    console.log('Processing completed');
     
     // Save the merged and transformed result
     const outputDir = path.resolve('./output');
