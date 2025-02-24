@@ -148,8 +148,8 @@ async function fileExists(filePath) {
   }
 
   // ✅ Use `StyleDictionary.create()` with proper import fix
-  const SD = StyleDictionary.create(getStyleDictionaryConfig());
-  SD.buildPlatform("json");
+  const SD = StyleDictionary.configure(getStyleDictionaryConfig());
+  SD.buildAllPlatforms();
 
   console.log("✅ Merged tokens generated at: build/json/merged-tokens.json");
 })();
