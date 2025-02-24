@@ -2,11 +2,9 @@ import { promises as fs } from "fs";
 import fetch from "node-fetch";
 import path from "path";
 import { fileURLToPath } from "url";
-import StyleDictionaryPackage from "style-dictionary"; // ✅ Fix import
+import StyleDictionary from "style-dictionary";
 import { register } from "@tokens-studio/sd-transforms";
 import { extractCollectionAndMode, extractCollectionModes } from "./utils.js";
-
-const StyleDictionary = StyleDictionaryPackage.default || StyleDictionaryPackage; // ✅ Ensure compatibility with ESM
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -147,7 +145,7 @@ async function fileExists(filePath) {
     return;
   }
 
-  // ✅ Use `StyleDictionary.create()` with proper import fix
+  // ✅ Use `configure()` instead of `create()`
   const SD = StyleDictionary.configure(getStyleDictionaryConfig());
   SD.buildAllPlatforms();
 
