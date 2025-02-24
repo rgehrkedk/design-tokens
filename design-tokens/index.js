@@ -5,6 +5,9 @@ import { fileURLToPath } from "url";
 import { register } from "@tokens-studio/sd-transforms";
 import { extractCollectionAndMode, extractCollectionModes } from "./utils.js";
 
+// ✅ Ensure Style Dictionary is imported correctly
+const StyleDictionary = (await import("style-dictionary")).default;
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -77,7 +80,6 @@ function getStyleDictionaryConfig() {
       "json/brand/*.json",
       "json/globals/*.json",
     ],
-    preprocessors: ["tokens-studio"], // Use Tokens Studio preprocessor
     platforms: {
       json: {
         transformGroup: "tokens-studio", // Apply the tokens-studio transformation
@@ -141,15 +143,11 @@ async function fileExists(filePath) {
     return;
   }
 
-  // ✅ Dynamically import Style Dictionary to support ESM
-  const StyleDictionary = (await import("style-dictionary"));
-  console.log("DEBUG: StyleDictionary import", StyleDictionary);
-
-  // ✅ Register Tokens Studio transforms
+  // ✅ Register Tokens Studio transforms (Fix: No preprocessor registration)
   register(StyleDictionary);
 
-  // ✅ Use `StyleDictionary.default.extend()` for ESM compatibility
-  const SD = StyleDictionary.default.extend(getStyleDictionaryConfig());
+  // ✅ Use `.extend()` with Style Dictionary v4.3.3
+  const SD = StyleDictionary.extend(getStyleDictionaryConfig());
   SD.buildAllPlatforms();
 
   console.log("✅ Merged tokens generated at: build/json/merged-tokens.json");
