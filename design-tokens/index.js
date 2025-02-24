@@ -2,11 +2,7 @@ import { promises as fs } from "fs";
 import fetch from "node-fetch";
 import path from "path";
 import { fileURLToPath } from "url";
-import { createRequire } from "module";
 import { extractCollectionAndMode, extractCollectionModes } from "./utils.js";
-
-// Create a require function to import CommonJS modules
-const require = createRequire(import.meta.url);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -144,33 +140,35 @@ async function fileExists(filePath) {
   }
 
   try {
-    // Create the bridge file
-    const bridgeFilePath = path.join(__dirname, 'sd-bridge.cjs');
+    // Create a temporary ESM bridge file that directly accesses Core
+    const bridgeFilePath = path.join(__dirname, 'sd-bridge.js');
     const bridgeContent = `
-    const StyleDictionary = require('style-dictionary');
-    const transforms = require('@tokens-studio/sd-transforms');
-
-    // Register transforms
-    transforms.register(StyleDictionary);
-
-    // Export what we need
-    module.exports = {
-      // Create a function that builds tokens
-      buildTokens: function(config) {
-        const dictionary = StyleDictionary.extend(config);
-        dictionary.buildAllPlatforms();
-        return true;
-      }
-    };
-    `;
-    await fs.writeFile(bridgeFilePath, bridgeContent);
-    console.log("✅ Created CommonJS bridge file");
-
-    // Use the bridge to build tokens
-    const config = getStyleDictionaryConfig();
-    const sdBridge = require('./sd-bridge.cjs');
+    // Direct import of Core module
+    import { Core } from 'style-dictionary/lib/Core.js';
+    import { register } from '@tokens-studio/sd-transforms';
     
-    sdBridge.buildTokens(config);
+    // Export a function to build tokens
+    export async function buildTokens(config) {
+      // Create a new Core instance with our config
+      const styleDictionary = new Core(config);
+      
+      // Register transforms
+      register(styleDictionary);
+      
+      // Build all platforms
+      styleDictionary.buildAllPlatforms();
+      
+      return true;
+    }
+    `;
+    
+    await fs.writeFile(bridgeFilePath, bridgeContent);
+    console.log("✅ Created ESM bridge file");
+    
+    // Import and use the bridge
+    const { buildTokens } = await import('./sd-bridge.js');
+    await buildTokens(getStyleDictionaryConfig());
+    
     console.log("✅ Merged tokens generated at: build/json/merged-tokens.json");
     
     // Clean up the bridge file
