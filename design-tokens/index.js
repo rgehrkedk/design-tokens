@@ -3,6 +3,7 @@ import fetch from "node-fetch";
 import path from "path";
 import { fileURLToPath } from "url";
 import StyleDictionary from "style-dictionary";
+import { register } from "@tokens-studio/sd-transforms";
 import { extractCollectionAndMode, extractCollectionModes } from "./utils.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -10,6 +11,9 @@ const __dirname = path.dirname(__filename);
 
 const styleDictionaryURL =
   "https://e-boks.zeroheight.com/api/token_management/token_set/10617/style_dictionary_links";
+
+// ✅ Register @tokens-studio/sd-transforms BEFORE using Style Dictionary
+register(StyleDictionary);
 
 /**
  * Fetches links for each collection and mode
@@ -68,37 +72,24 @@ async function saveFiles(links) {
 /**
  * Returns Style Dictionary config
  *
- * @param {string} themeMode - Theme mode (e.g., "light", "dark")
- * @param {string} brandMode - Brand mode (e.g., "eboks", "postnl")
- * @returns {object} Style Dictionary config
+ * @returns {object} Style Dictionary config to merge all tokens into one JSON file
  */
-function getStyleDictionaryConfig(themeMode, brandMode) {
-  const buildDir = [themeMode, brandMode].join("_");
-
+function getStyleDictionaryConfig() {
   return {
     source: [
-      `json/theme/${themeMode}.json`,
-      `json/brand/${brandMode}.json`,
-      `json/globals/value.json` // Adding globals
+      "json/theme/*.json",
+      "json/brand/*.json",
+      "json/globals/*.json",
     ],
+    preprocessors: ["tokens-studio"], // Use Tokens Studio preprocessor
     platforms: {
-      web: {
-        transformGroup: "web",
-        buildPath: `build/web/${buildDir}/`,
+      json: {
+        transformGroup: "tokens-studio", // Apply the tokens-studio transformation
+        buildPath: "build/json/",
         files: [
           {
-            destination: "tokens.json",
+            destination: "merged-tokens.json",
             format: "json",
-          },
-        ],
-      },
-      ios: {
-        transformGroup: "ios",
-        buildPath: `build/ios/${buildDir}/`,
-        files: [
-          {
-            destination: "tokens.h",
-            format: "ios/macros",
           },
         ],
       },
@@ -139,39 +130,24 @@ async function fileExists(filePath) {
   const brandModes = collectionModes.brand || [];
   const themeModes = collectionModes.theme || [];
   const globalsModes = collectionModes.globals || [];
-  const platforms = ["web", "ios"];
 
   console.log("\n🚀 Build started...");
   console.log("🎨 Theme Modes:", themeModes);
   console.log("🏢 Brand Modes:", brandModes);
   console.log("🌍 Globals Mode:", globalsModes);
 
-  if (themeModes.length === 0 || brandModes.length === 0 || globalsModes.length === 0) {
+  // Ensure that at least one global token file exists
+  const globalsFile = "json/globals/value.json";
+  const globalsExists = await fileExists(globalsFile);
+
+  if (themeModes.length === 0 || brandModes.length === 0 || !globalsExists) {
     console.error("❗️Missing theme, brand, or global modes, cannot continue.");
     return;
   }
 
-  for (const themeMode of themeModes) {
-    for (const brandMode of brandModes) {
-      for (const platform of platforms) {
-        const themeFile = `json/theme/${themeMode}.json`;
-        const brandFile = `json/brand/${brandMode}.json`;
-        const globalsFile = `json/globals/value.json`;
+  // Merge all tokens into one JSON file using Style Dictionary
+  const SD = StyleDictionary.extend(getStyleDictionaryConfig());
+  SD.buildPlatform("json");
 
-        const themeExists = await fileExists(themeFile);
-        const brandExists = await fileExists(brandFile);
-        const globalsExists = await fileExists(globalsFile);
-
-        if (!themeExists || !brandExists || !globalsExists) {
-          console.error(`❗️Missing files: ${themeFile} or ${brandFile} or ${globalsFile}`);
-          continue;
-        }
-
-        const sd = new StyleDictionary(getStyleDictionaryConfig(themeMode, brandMode));
-        sd.buildPlatform(platform);
-      }
-    }
-  }
-
-  console.log("✅ Style Dictionary build completed!");
+  console.log("✅ Merged tokens generated at: build/json/merged-tokens.json");
 })();
