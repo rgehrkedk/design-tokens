@@ -13,59 +13,14 @@ async function fetchTokenUrls() {
     console.log(`Fetching token URLs from: ${STYLE_DICTIONARY_LINKS_URL}`);
     const response = await axios.get(STYLE_DICTIONARY_LINKS_URL);
     
-    // Log what we got back for debugging
-    console.log('Response type:', typeof response.data);
-    console.log('Response preview:', typeof response.data === 'string' 
-      ? response.data.substring(0, 200) + '...' 
-      : JSON.stringify(response.data).substring(0, 200) + '...');
-    
-    // Handle plain text response with URLs
+    // Based on the ZeroHeight demo script, we need to split by newlines
     if (typeof response.data === 'string') {
-      // Extract URLs using regex - this will find all URLs in the response
-      const urlRegex = /(https?:\/\/[^\s"'<>]+)/g;
-      const matches = response.data.match(urlRegex);
-      
-      if (matches && matches.length > 0) {
-        // Filter to only include style dictionary URLs
-        const styleUrls = matches.filter(url => 
-          url.includes('format=style-dictionary') || 
-          url.includes('token_set') || 
-          url.includes('export')
-        );
-        
-        if (styleUrls.length > 0) {
-          console.log(`Found ${styleUrls.length} token URLs using regex`);
-          return styleUrls;
-        }
-      }
-      
-      // If no matches found with regex, check if it's a direct URL
-      if (response.data.trim().startsWith('http') && 
-          (response.data.includes('format=style-dictionary') || 
-           response.data.includes('token_set'))) {
-        // Split by newlines in case there are multiple URLs
-        const urls = response.data.trim().split(/\r?\n/).filter(line => 
-          line.trim().startsWith('http')
-        );
-        
-        if (urls.length > 0) {
-          console.log(`Found ${urls.length} token URLs by line splitting`);
-          return urls;
-        }
-      }
+      const links = response.data.split('\n').filter(link => link.trim() !== '');
+      console.log(`Found ${links.length} token URLs by splitting newlines`);
+      return links;
     }
     
-    // If we're here, try to parse as JSON
-    if (typeof response.data === 'object' && response.data !== null) {
-      // The response might be a JSON object with URLs
-      const extractedUrls = extractUrlsFromResponse(response.data);
-      if (extractedUrls.length > 0) {
-        console.log(`Extracted ${extractedUrls.length} URLs from JSON response`);
-        return extractedUrls;
-      }
-    }
-    
-    // Last resort: use hardcoded URLs
+    // Fallback to hardcoded URLs
     console.warn('Could not extract URLs from response, using hardcoded URLs');
     return [
       'https://e-boks.zeroheight.com/api/token_management/token_set/10617/export?format=style-dictionary&collection_id=22009&mode_id=38483&collection_name=brand&mode_name=eboks',
@@ -131,7 +86,7 @@ async function mergeAllTokens() {
     console.log('Starting to fetch token sets...');
     
     // Fetch all token sets
-    const tokenSets = await Promise.all(tokenUrls.map(fetchTokens));
+    const tokenSets = await Promise.all(tokenUrls.map(url => fetchTokens(url)));
     console.log(`Fetched ${tokenSets.length} token sets in total`);
     
     const validTokenSets = tokenSets.filter(set => set !== null);
