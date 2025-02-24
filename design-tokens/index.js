@@ -70,15 +70,15 @@ async function saveFiles(links) {
 /**
  * Returns Style Dictionary config
  *
- * @param {string} eboks
+ * @param {string} mode1
  * @param {string} mode2
  * @returns {json} Style Dictionary config
  */
-function getStyleDictionaryConfig(eboks, mode2) {
-  const buildDir = [eboks, mode2].join("_");
+function getStyleDictionaryConfig(mode1, mode2) {
+  const buildDir = [mode1, mode2].join("_");
 
   return {
-    source: [`json/brand/${eboks}.json`, `json/primitives/${mode2}.json`],
+    source: [`json/theme/${mode1}.json`, `json/brand/${mode2}.json`],
     platforms: {
       web: {
         transformGroup: "web",
