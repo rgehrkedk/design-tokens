@@ -1,0 +1,10 @@
+{
+    "color": {
+      "brand": {
+        "primary": {
+          "type": "color",
+          "value": "#FF0000"
+        }
+      }
+    }
+  }

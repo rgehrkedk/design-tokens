@@ -1,55 +1,40 @@
+// style-dictionary.config.mjs
+
 import StyleDictionary from 'style-dictionary';
-import { registerTokenStudioTransforms } from '@tokens-studio/sd-transforms';
+import { registerTransforms } from '@tokens-studio/sd-transforms';
 
-registerTokenStudioTransforms(StyleDictionary);
+// 1) Kald registerTransforms med Style Dictionary
+registerTransforms(StyleDictionary);
 
+// 2) (Valgfrit) - i nogle versioner skal man selv definere transformGroups.
+//    Hvis du får fejl om “Unknown transformGroup 'tokens-studio'”,
+//    kan du i stedet definere en custom group eller prøve en eksisterende:
+
+// Eksempel på custom group med nogle “ts/” transforms
+// (Her gætter vi på, at 1.0.0 indeholder nogle “ts/color/...”-transformers)
+// (Hvis du får fejl, slet nogle af transform-navnene eller tjek i plugin-koden)
+StyleDictionary.registerTransformGroup({
+  name: 'tokens-studio',
+  transforms: [
+    'ts/color/modifiers',
+    'ts/color/css/hsl',
+    'ts/size/px',
+    'ts/opacity',
+    'name/cti/kebab',
+  ]
+});
+
+// 3) Eksportér konfiguration
 export default {
+  source: ['tokens/*.json'],
   platforms: {
-    brandEboks: {
-      source: [
-        'tokens/globals/value.json',
-        'tokens/theme/light.json',
-        'tokens/theme/dark.json',
-        'tokens/brand/eboks.json'
-      ],
+    minimal: {
       transformGroup: 'tokens-studio',
-      buildPath: 'build/eboks/',
+      buildPath: 'build/',
       files: [
         {
           format: 'json/nested',
-          destination: 'eboks-tokens.json'
-        }
-      ]
-    },
-    brandPostnl: {
-      source: [
-        'tokens/globals/value.json',
-        'tokens/theme/light.json',
-        'tokens/theme/dark.json',
-        'tokens/brand/postnl.json'
-      ],
-      transformGroup: 'tokens-studio',
-      buildPath: 'build/postnl/',
-      files: [
-        {
-          format: 'json/nested',
-          destination: 'postnl-tokens.json'
-        }
-      ]
-    },
-    brandNykredit: {
-      source: [
-        'tokens/globals/value.json',
-        'tokens/theme/light.json',
-        'tokens/theme/dark.json',
-        'tokens/brand/nykredit.json'
-      ],
-      transformGroup: 'tokens-studio',
-      buildPath: 'build/nykredit/',
-      files: [
-        {
-          format: 'json/nested',
-          destination: 'nykredit-tokens.json'
+          destination: 'tokens.json'
         }
       ]
     }
