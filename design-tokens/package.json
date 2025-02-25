@@ -1,12 +1,20 @@
 {
-    "name": "design-tokens",
-    "version": "1.0.0",
-    "description": "Design tokens for brands",
-    "type": "module",
-    "scripts": {
-      "build:tokens": "node build.js"
-    },
-    "dependencies": {
-      "style-dictionary": "^4.3.3"
-    }
+  "name": "design-tokens",
+  "version": "1.0.0",
+  "description": "Design tokens for forskellige brands",
+  "type": "module",
+  "scripts": {
+    "build:tokens": "node enhanced-build.js",
+    "build:tokens:original": "node build.js",
+    "clean": "rimraf build"
+  },
+  "dependencies": {
+    "style-dictionary": "^4.3.3"
+  },
+  "devDependencies": {
+    "rimraf": "^5.0.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
+}

@@ -1,95 +1,128 @@
 /**
- * Build script til Style Dictionary v4
+ * Forbedret build script for Style Dictionary v4
+ * 
+ * Dette script bygger design tokens for tre brands:
+ * - eboks
+ * - nykredit
+ * - postnl
+ * 
+ * Hver brand bruger fælles globale tokens og tema tokens,
+ * kombineret med brandspecifikke tokens.
  */
 
-// I version 4, er API'en muligvis ændret
-import * as StyleDictionaryPackage from 'style-dictionary';
+import StyleDictionary from 'style-dictionary';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import fs from 'fs';
 
-// Få adgang til StyleDictionary konstruktøren
-const StyleDictionary = StyleDictionaryPackage.default || StyleDictionaryPackage;
+// Håndter filsti i ESM context
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-// Log lidt information om versionen
-console.log('Style Dictionary Version:', StyleDictionaryPackage.version || 'Unknown');
+// Registrer output-mappe
+const OUTPUT_DIR = path.resolve(__dirname, 'build');
 
-// Konfiguration
-const config = {
-  source: ['tokens/**/*.json'],
-  platforms: {
-    eboks: {
-      source: [
-        'tokens/globals/value.json',
-        'tokens/theme/light.json', 
-        'tokens/theme/dark.json',
-        'tokens/brand/eboks.json'
-      ],
-      transformGroup: 'js',
-      buildPath: 'build/',
-      files: [{
-        destination: 'eboks-tokens.json',
-        format: 'json/nested',
-        options: {
-          outputReferences: true
-        }
-      }]
-    },
-    nykredit: {
-      source: [
-        'tokens/globals/value.json',
-        'tokens/theme/light.json', 
-        'tokens/theme/dark.json',
-        'tokens/brand/nykredit.json'
-      ],
-      transformGroup: 'js',
-      buildPath: 'build/',
-      files: [{
-        destination: 'nykredit-tokens.json',
-        format: 'json/nested',
-        options: {
-          outputReferences: true
-        }
-      }]
-    },
-    postnl: {
-      source: [
-        'tokens/globals/value.json',
-        'tokens/theme/light.json', 
-        'tokens/theme/dark.json',
-        'tokens/brand/postnl.json'
-      ],
-      transformGroup: 'js',
-      buildPath: 'build/',
-      files: [{
-        destination: 'postnl-tokens.json',
-        format: 'json/nested',
-        options: {
-          outputReferences: true
-        }
-      }]
-    }
-  }
-};
-
-// Forskellige måder at kunne tilgå .extend metoden
-let sd;
-try {
-  if (typeof StyleDictionary.extend === 'function') {
-    sd = StyleDictionary.extend(config);
-    console.log('Brugte StyleDictionary.extend');
-  } else if (StyleDictionary.core && typeof StyleDictionary.core.extend === 'function') {
-    sd = StyleDictionary.core.extend(config);
-    console.log('Brugte StyleDictionary.core.extend');
-  } else if (typeof StyleDictionary === 'function') {
-    sd = StyleDictionary(config);
-    console.log('Brugte StyleDictionary som konstruktør');
-  } else {
-    throw new Error('Kunne ikke finde extend metoden på StyleDictionary');
-  }
-
-  // Byg alle platforme
-  console.log('Bygger tokens for alle brands...');
-  sd.buildAllPlatforms();
-  console.log('Færdig! Tokens er gemt i build-mappen.');
-} catch (error) {
-  console.error('Fejl ved bygning af tokens:', error);
-  console.error('Style Dictionary struktur:', StyleDictionary);
+// Opret output-mappe hvis den ikke findes
+if (!fs.existsSync(OUTPUT_DIR)) {
+  fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+  console.log(`Oprettet output-mappe: ${OUTPUT_DIR}`);
 }
+
+// Log StyleDictionary version
+console.log('Style Dictionary Version:', StyleDictionary.version);
+
+/**
+ * Registrer brugerdefinerede transformationer eller formater
+ * Hvis du behøver specialiserede transformationer
+ */
+// StyleDictionary.registerTransform({
+//   name: 'myCustomTransform',
+//   type: 'value',
+//   matcher: (prop) => prop.attributes.category === 'color',
+//   transformer: (prop) => {
+//     // Transformation logik...
+//     return prop.value;
+//   }
+// });
+
+/**
+ * Bygger tokens for et specifikt brand
+ * @param {string} brand - brandnavn (eboks, nykredit, postnl)
+ */
+function buildBrandTokens(brand) {
+  console.log(`\n🔧 Bygger tokens for ${brand}...`);
+  
+  // Definer kildefiler for token-opbygning
+  const sources = [
+    'tokens/globals/value.json',
+    'tokens/theme/light.json', 
+    'tokens/theme/dark.json',
+    `tokens/brand/${brand}.json`
+  ];
+  
+  // Opret Style Dictionary configuration
+  const config = {
+    source: sources,
+    platforms: {
+      json: {
+        transformGroup: 'js',
+        buildPath: 'build/',
+        files: [{
+          destination: `${brand}-tokens.json`,
+          format: 'json/nested',
+          options: {
+            outputReferences: true
+          }
+        }]
+      },
+      // CSS-output
+      css: {
+        transformGroup: 'css',
+        buildPath: 'build/css/',
+        files: [{
+          destination: `${brand}-tokens.css`,
+          format: 'css/variables',
+          options: {
+            outputReferences: true,
+            selector: `.${brand}-theme` // CSS vil kun gælde inden for denne selector
+          }
+        }]
+      }
+    }
+  };
+
+  try {
+    // Udvid StyleDictionary med konfigurationen og byg
+    const sd = StyleDictionary.extend(config);
+    sd.buildAllPlatforms();
+    console.log(`✅ ${brand} tokens bygget succesfuldt!`);
+  } catch (error) {
+    console.error(`❌ Fejl ved bygning af ${brand} tokens:`, error);
+    throw error; // Re-throw for at håndtere det i main funktion
+  }
+}
+
+/**
+ * Hovedfunktion der kører build processen
+ */
+async function main() {
+  console.log('🚀 Starter Design Tokens build proces...');
+  
+  const brands = ['eboks', 'nykredit', 'postnl'];
+  
+  try {
+    // For hver brand, byg tokens
+    for (const brand of brands) {
+      buildBrandTokens(brand);
+    }
+    
+    console.log('\n✨ Alle tokens er bygget succesfuldt!');
+    console.log(`📁 Tokens er gemt i ${OUTPUT_DIR} mappen`);
+  } catch (error) {
+    console.error('❌ Build process fejlede:', error);
+    process.exit(1);
+  }
+}
+
+// Kør programmet
+main();

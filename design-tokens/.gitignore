@@ -1,2 +1,21 @@
+# Build output
+build/
+dist/
+json/
+
+# Dependencies
 node_modules/
+
+# IDE filer
+.idea/
+.vscode/
+*.sublime-*
+
+# OS filer
 .DS_Store
+Thumbs.db
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
