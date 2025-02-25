@@ -1,14 +1,13 @@
 // style-dictionary.config.mjs
 
 import StyleDictionary from 'style-dictionary';
-import { registerTransforms } from '@tokens-studio/sd-transforms';
+// Bemærk brug af "registerTokenStudioTransforms" frem for "registerTransforms"
+import { registerTokenStudioTransforms } from '@tokens-studio/sd-transforms';
 
-// 1. Registrér tokens-studio transforms
-registerTransforms(StyleDictionary);
+registerTokenStudioTransforms(StyleDictionary);
 
 export default {
   platforms: {
-    // brand eBoks
     brandEboks: {
       source: [
         'tokens/globals/value.json',
@@ -25,7 +24,6 @@ export default {
         }
       ]
     },
-    // brand PostNL
     brandPostnl: {
       source: [
         'tokens/globals/value.json',
@@ -42,7 +40,6 @@ export default {
         }
       ]
     },
-    // brand Nykredit
     brandNykredit: {
       source: [
         'tokens/globals/value.json',
