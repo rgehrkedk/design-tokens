@@ -1,43 +1,10 @@
 /**
- * Build script med fokus på korrekt håndtering af token-referencer
+ * Forbedret build script til korrekt reference håndtering i Style Dictionary v4
  */
 
 import StyleDictionary from 'style-dictionary';
 
 console.log('Style Dictionary Version:', StyleDictionary.VERSION);
-
-// Definer en custom transform
-StyleDictionary.registerTransform({
-  name: 'attribute/cti',
-  type: 'attribute',
-  transformer: function(prop) {
-    return {
-      category: prop.path[0],
-      type: prop.path[1],
-      item: prop.path[2]
-    };
-  }
-});
-
-// Registrer custom format for mere detaljeret output
-StyleDictionary.registerFormat({
-  name: 'json/nested-with-references',
-  formatter: function(dictionary, config) {
-    // Få alle tokens og bevar deres fulde path
-    return JSON.stringify(dictionary.tokens, null, 2);
-  }
-});
-
-// Definer transformGroup for fuld reference-bevarelse
-StyleDictionary.registerTransformGroup({
-  name: 'js-with-references',
-  transforms: [
-    'attribute/cti',
-    'name/cti/constant',
-    'size/px',
-    'color/css'
-  ]
-});
 
 // Konfiguration for alle brands
 const config = {
@@ -46,13 +13,16 @@ const config = {
   ],
   platforms: {
     eboks: {
-      transformGroup: 'js-with-references',
+      transformGroup: 'js',
       buildPath: 'build/',
       files: [{
         destination: 'eboks-tokens.json',
-        format: 'json/nested-with-references',
+        format: 'json/nested',
         options: {
-          outputReferences: true
+          outputReferences: true,
+          // Style Dictionary v4 understøtter outputReferenceFallbacks
+          // Dette sikrer, at reference-værdier bevares selvom de ikke kan opløses
+          outputReferenceFallbacks: true 
         },
         filter: (token) => {
           return token.filePath.includes('eboks.json') || 
@@ -61,13 +31,14 @@ const config = {
       }]
     },
     nykredit: {
-      transformGroup: 'js-with-references',
+      transformGroup: 'js',
       buildPath: 'build/',
       files: [{
         destination: 'nykredit-tokens.json',
-        format: 'json/nested-with-references',
+        format: 'json/nested',
         options: {
-          outputReferences: true
+          outputReferences: true,
+          outputReferenceFallbacks: true
         },
         filter: (token) => {
           return token.filePath.includes('nykredit.json') || 
@@ -76,13 +47,14 @@ const config = {
       }]
     },
     postnl: {
-      transformGroup: 'js-with-references',
+      transformGroup: 'js',
       buildPath: 'build/',
       files: [{
         destination: 'postnl-tokens.json',
-        format: 'json/nested-with-references',
+        format: 'json/nested',
         options: {
-          outputReferences: true
+          outputReferences: true,
+          outputReferenceFallbacks: true
         },
         filter: (token) => {
           return token.filePath.includes('postnl.json') || 
@@ -94,10 +66,14 @@ const config = {
 };
 
 try {
-  console.log('Building tokens with reference preservation...');
+  console.log('Bygger tokens med bevarelse af referencer...');
   const sd = StyleDictionary(config);
+  
+  // Udskriv tokens før bygning for at tjekke strukturen
+  console.log('Starter bygning af tokens...');
+  
   sd.buildAllPlatforms();
-  console.log('✅ Finished! Tokens are saved in the build folder.');
+  console.log('✅ Færdig! Tokens er gemt i build-mappen.');
 } catch (error) {
-  console.error('❌ Build failed:', error);
+  console.error('❌ Bygning fejlede:', error);
 }

@@ -4,7 +4,7 @@
   "description": "Design tokens for brands",
   "type": "module",
   "scripts": {
-    "build:tokens": "node enhanced-build.js",
+    "build:tokens": "node optimized-build.js",
     "build:simple": "node simple-build.js",
     "build:original": "node build.js",
     "build:reference": "node reference-build.js"

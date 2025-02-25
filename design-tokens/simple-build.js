@@ -1,17 +1,15 @@
 /**
- * Opdateret simpel build script for Style Dictionary v4
+ * Forbedret version af simple-build der sikrer bevarelse af references
+ * Baseret på den simple version der allerede virker
  */
 
 // Import Style Dictionary
 import StyleDictionary from 'style-dictionary';
 
-// Log version og strukturer for at hjælpe med at fejlfinde
-console.log('Style Dictionary VERSION:', StyleDictionary.VERSION);
-console.log('Style Dictionary constructor type:', typeof StyleDictionary);
-console.log('Direkte properties på StyleDictionary:', Object.getOwnPropertyNames(StyleDictionary));
-console.log('Er StyleDictionary en class:', StyleDictionary.toString().startsWith('class'));
+// Log version - vi ved at denne fungerer
+console.log('Style Dictionary Version:', StyleDictionary.VERSION);
 
-// Konfiguration for alle brands
+// Konfiguration for alle brands - lignende simple-build
 const config = {
   source: [
     'tokens/**/*.json'
@@ -24,7 +22,11 @@ const config = {
         destination: 'eboks-tokens.json',
         format: 'json/nested',
         options: {
-          outputReferences: true
+          outputReferences: true,
+          // Dette sikrer at første niveau af referencer inkluderes
+          includeMeta: true,
+          // Denne indstilling bevarer hele token stien
+          preserveRawValue: true
         }
       }]
     },
@@ -35,7 +37,9 @@ const config = {
         destination: 'nykredit-tokens.json',
         format: 'json/nested',
         options: {
-          outputReferences: true
+          outputReferences: true,
+          includeMeta: true,
+          preserveRawValue: true
         }
       }]
     },
@@ -46,7 +50,9 @@ const config = {
         destination: 'postnl-tokens.json',
         format: 'json/nested',
         options: {
-          outputReferences: true
+          outputReferences: true,
+          includeMeta: true,
+          preserveRawValue: true
         }
       }]
     }
@@ -56,47 +62,14 @@ const config = {
 try {
   console.log('Starter StyleDictionary bygning...');
   
-  // Prøv at anvende StyleDictionary som en klasse (constructor)
-  try {
-    console.log('Prøver at anvende StyleDictionary som en constructor...');
-    const sd = new StyleDictionary(config);
-    
-    // Tjek om der er en buildAllPlatforms metode
-    if (typeof sd.buildAllPlatforms === 'function') {
-      console.log('Bygger tokens for alle brands med sd.buildAllPlatforms()...');
-      sd.buildAllPlatforms();
-      console.log('✅ Færdig! Tokens er gemt i build-mappen.');
-    } else {
-      console.log('Tilgængelige metoder på sd:', Object.getOwnPropertyNames(sd));
-      
-      // Prøv build metoden hvis buildAllPlatforms ikke findes
-      if (typeof sd.build === 'function') {
-        console.log('Bygger tokens for alle brands med sd.build()...');
-        sd.build();
-        console.log('✅ Færdig! Tokens er gemt i build-mappen.');
-      } else {
-        throw new Error('Kunne ikke finde build eller buildAllPlatforms metoder');
-      }
-    }
-  } catch (constructorError) {
-    console.log('Constructor approach failed:', constructorError.message);
-    
-    // Prøv at kalde StyleDictionary som en funktion
-    console.log('Prøver at kalde StyleDictionary som en funktion...');
-    const sd = StyleDictionary(config);
-    
-    if (typeof sd.buildAllPlatforms === 'function') {
-      console.log('Bygger tokens for alle brands med funktionsresultat...');
-      sd.buildAllPlatforms();
-      console.log('✅ Færdig! Tokens er gemt i build-mappen.');
-    } else if (typeof sd.build === 'function') {
-      console.log('Bygger tokens med sd.build()...');
-      sd.build();
-      console.log('✅ Færdig! Tokens er gemt i build-mappen.');
-    } else {
-      throw new Error('Kunne ikke finde build metoder på funktionsresultatet');
-    }
-  }
+  // Vi bruger new StyleDictionary() fordi det er sådan det virkede i simple-build
+  console.log('Prøver at anvende StyleDictionary som en constructor...');
+  const sd = new StyleDictionary(config);
+  
+  // Byg alle platforme
+  console.log('Bygger tokens for alle brands...');
+  sd.buildAllPlatforms();
+  console.log('✅ Færdig! Tokens er gemt i build-mappen.');
 } catch (error) {
   console.error('❌ Fejl ved bygning af tokens:', error);
 }
