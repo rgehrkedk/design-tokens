@@ -1,29 +1,18 @@
 /**
- * Build script til Style Dictionary (ES modules version)
+ * Modern build script for Style Dictionary
+ * Dette følger den nuværende anbefaling fra Style Dictionary dokumentationen
  */
 
-import { createRequire } from 'module';
-import { fileURLToPath } from 'url';
-import { dirname, resolve } from 'path';
+import StyleDictionary from 'style-dictionary';
 
-// Opret en require-funktion for at importere CommonJS-moduler
-const require = createRequire(import.meta.url);
-
-// Få den aktuelle filsti
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-// Importér Style Dictionary som CommonJS modul
-const StyleDictionary = require('style-dictionary');
-
-// Importér konfigurationen
-const config = {
+// Konfigurer platforms
+const myStyleDictionary = StyleDictionary.extend({
   source: ['tokens/**/*.json'],
   platforms: {
     eboks: {
       source: [
         'tokens/globals/value.json',
-        'tokens/theme/light.json',
+        'tokens/theme/light.json', 
         'tokens/theme/dark.json',
         'tokens/brand/eboks.json'
       ],
@@ -40,7 +29,7 @@ const config = {
     nykredit: {
       source: [
         'tokens/globals/value.json',
-        'tokens/theme/light.json',
+        'tokens/theme/light.json', 
         'tokens/theme/dark.json',
         'tokens/brand/nykredit.json'
       ],
@@ -57,7 +46,7 @@ const config = {
     postnl: {
       source: [
         'tokens/globals/value.json',
-        'tokens/theme/light.json',
+        'tokens/theme/light.json', 
         'tokens/theme/dark.json',
         'tokens/brand/postnl.json'
       ],
@@ -72,17 +61,9 @@ const config = {
       }]
     }
   }
-};
+});
 
-try {
-  // Opsæt Style Dictionary
-  const sd = StyleDictionary.extend(config);
-  
-  // Byg alle platforme
-  console.log('Bygger tokens for alle brands...');
-  sd.buildAllPlatforms();
-  
-  console.log('\nBygning færdig! Token-filer er gemt i build-mappen.');
-} catch (error) {
-  console.error('Fejl under bygning af tokens:', error);
-}
+// Byg alle platforms
+console.log('Bygger tokens for alle brands...');
+myStyleDictionary.buildAllPlatforms();
+console.log('Færdig! Tokens er gemt i build-mappen.');
