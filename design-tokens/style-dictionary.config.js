@@ -1,9 +1,9 @@
 /**
- * Style Dictionary konfiguration
+ * Style Dictionary konfiguration (ES modules version)
  * Bygger separate token filer for hvert brand (eboks, nykredit, postnl)
  */
 
-module.exports = {
+export default {
   source: ['tokens/**/*.json'], // Inkluderer alle JSON-filer i tokens-mappen
   platforms: {
     eboks: {

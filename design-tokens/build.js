@@ -1,9 +1,15 @@
 /**
- * Build script til Style Dictionary
+ * Build script til Style Dictionary (ES modules version)
  */
 
-const StyleDictionary = require('style-dictionary');
-const config = require('./style-dictionary.config.js');
+import StyleDictionary from 'style-dictionary';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+import config from './style-dictionary.config.js';
+
+// Få den aktuelle filsti (erstatning for __dirname i ES modules)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // Opsæt Style Dictionary med konfigurationen
 const sd = StyleDictionary.extend(config);
