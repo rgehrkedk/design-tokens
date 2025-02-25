@@ -1,3 +1,5 @@
+// style-dictionary.config.mjs
+
 import StyleDictionary from 'style-dictionary';
 import { registerTokenStudioTransforms } from '@tokens-studio/sd-transforms';
 
@@ -21,6 +23,6 @@ export default {
         }
       ]
     },
-    // postnl, nykredit, ...
+    // Define brandPostnl and brandNykredit similarly...
   }
 };
