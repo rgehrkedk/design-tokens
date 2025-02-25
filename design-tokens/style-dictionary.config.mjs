@@ -1,10 +1,9 @@
 // style-dictionary.config.mjs
 
 import StyleDictionary from 'style-dictionary';
-import { transformers } from '@tokens-studio/sd-transforms';
+import { registerTokenStudioTransforms } from '@tokens-studio/sd-transforms';
 
-// Her kalder vi "transformers.registerTransforms(...)" – i v1.2.9 er det denne metode
-transformers.registerTransforms(StyleDictionary);
+registerTokenStudioTransforms(StyleDictionary);
 
 export default {
   platforms: {
