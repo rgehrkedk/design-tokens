@@ -1,104 +1,61 @@
-const StyleDictionary = require('style-dictionary');
+// style-dictionary.config.js
 
-// (valgfrit) Custom transforms eller tokens-studio transforms
-// e.g.:
-// const sdTransforms = require('@tokens-studio/sd-transforms');
-// sdTransforms.registerTransforms(StyleDictionary); // hvis I vil have tokens-studio reference parsing
+const StyleDictionary = require('style-dictionary');
+const sdTransforms = require('@tokens-studio/sd-transforms');
+
+// 1. Registrér tokens-studio transforms, så referencer opløses korrekt
+sdTransforms.registerTransforms(StyleDictionary);
 
 module.exports = {
-  // I dette eksempel sætter vi “source” for hver "platform"
   platforms: {
-    eboks_light: {
+    // brand eBoks
+    eboks: {
       source: [
         'tokens/globals/value.json',
         'tokens/theme/light.json',
-        'tokens/brand/eboks.json'
-      ],
-      transformGroup: 'tokens-studio',    // brug tokens-studio transforms
-      buildPath: 'build/eboks/light/',    // mappe for genererede filer
-      files: [
-        {
-          destination: 'tokens.json',    // fx "tokens.json"
-          format: 'json/nested'
-        }
-      ]
-    },
-    eboks_dark: {
-      source: [
-        'tokens/globals/value.json',
         'tokens/theme/dark.json',
         'tokens/brand/eboks.json'
       ],
       transformGroup: 'tokens-studio',
-      buildPath: 'build/eboks/dark/',
+      buildPath: 'build/eboks/',
       files: [
         {
-          destination: 'tokens.json',
-          format: 'json/nested'
+          format: 'json/nested',
+          destination: 'eboks-tokens.json'
         }
       ]
     },
-
-    // PostNL
-    postnl_light: {
+    // brand PostNL
+    postnl: {
       source: [
         'tokens/globals/value.json',
         'tokens/theme/light.json',
-        'tokens/brand/postnl.json'
-      ],
-      transformGroup: 'tokens-studio',
-      buildPath: 'build/postnl/light/',
-      files: [
-        {
-          destination: 'tokens.json',
-          format: 'json/nested'
-        }
-      ]
-    },
-    postnl_dark: {
-      source: [
-        'tokens/globals/value.json',
         'tokens/theme/dark.json',
         'tokens/brand/postnl.json'
       ],
       transformGroup: 'tokens-studio',
-      buildPath: 'build/postnl/dark/',
+      buildPath: 'build/postnl/',
       files: [
         {
-          destination: 'tokens.json',
-          format: 'json/nested'
+          format: 'json/nested',
+          destination: 'postnl-tokens.json'
         }
       ]
     },
-
-    // Nykredit
-    nykredit_light: {
+    // brand Nykredit
+    nykredit: {
       source: [
         'tokens/globals/value.json',
         'tokens/theme/light.json',
-        'tokens/brand/nykredit.json'
-      ],
-      transformGroup: 'tokens-studio',
-      buildPath: 'build/nykredit/light/',
-      files: [
-        {
-          destination: 'tokens.json',
-          format: 'json/nested'
-        }
-      ]
-    },
-    nykredit_dark: {
-      source: [
-        'tokens/globals/value.json',
         'tokens/theme/dark.json',
         'tokens/brand/nykredit.json'
       ],
       transformGroup: 'tokens-studio',
-      buildPath: 'build/nykredit/dark/',
+      buildPath: 'build/nykredit/',
       files: [
         {
-          destination: 'tokens.json',
-          format: 'json/nested'
+          format: 'json/nested',
+          destination: 'nykredit-tokens.json'
         }
       ]
     }
