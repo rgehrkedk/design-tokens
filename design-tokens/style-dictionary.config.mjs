@@ -1,10 +1,10 @@
 // style-dictionary.config.mjs
 
 import StyleDictionary from 'style-dictionary';
-import sdTransforms from '@tokens-studio/sd-transforms';
+import registerTransforms from '@tokens-studio/sd-transforms';
 
 // 1. Registrér tokens-studio transforms (kræver Style Dictionary 4.x)
-sdTransforms.registerTransforms(StyleDictionary);
+registerTransforms(StyleDictionary);
 
 // 2. Eksportér din Style Dictionary konfiguration som "default"
 export default {
