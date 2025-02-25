@@ -1,13 +1,11 @@
 {
-    "name": "design-tokens-merger",
+    "name": "design-tokens",
     "version": "1.0.0",
-    "description": "Merges design tokens from multiple sources using style dictionary transforms",
-    "main": "merge-tokens.js",
     "scripts": {
       "fetch:tokens": "node fetch-tokens.js",
       "build:tokens": "style-dictionary build"
     },
-    "dependencies": {
+    "devDependencies": {
       "@tokens-studio/sd-transforms": "^1.0.0",
       "axios": "^1.4.0",
       "style-dictionary": "^3.7.2"
