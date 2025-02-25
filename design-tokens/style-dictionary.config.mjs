@@ -1,9 +1,7 @@
-// style-dictionary.config.mjs
-
 import StyleDictionary from 'style-dictionary';
-import { registerTokenStudioTransforms } from '@tokens-studio/sd-transforms';
+import { registerTransforms } from '@tokens-studio/sd-transforms';
 
-registerTokenStudioTransforms(StyleDictionary);
+registerTransforms(StyleDictionary);
 
 export default {
   platforms: {
@@ -23,6 +21,37 @@ export default {
         }
       ]
     },
-    // Define brandPostnl and brandNykredit similarly...
+    brandPostnl: {
+      source: [
+        'tokens/globals/value.json',
+        'tokens/theme/light.json',
+        'tokens/theme/dark.json',
+        'tokens/brand/postnl.json'
+      ],
+      transformGroup: 'tokens-studio',
+      buildPath: 'build/postnl/',
+      files: [
+        {
+          format: 'json/nested',
+          destination: 'postnl-tokens.json'
+        }
+      ]
+    },
+    brandNykredit: {
+      source: [
+        'tokens/globals/value.json',
+        'tokens/theme/light.json',
+        'tokens/theme/dark.json',
+        'tokens/brand/nykredit.json'
+      ],
+      transformGroup: 'tokens-studio',
+      buildPath: 'build/nykredit/',
+      files: [
+        {
+          format: 'json/nested',
+          destination: 'nykredit-tokens.json'
+        }
+      ]
+    }
   }
 };
