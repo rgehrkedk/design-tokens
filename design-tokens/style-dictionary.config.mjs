@@ -1,15 +1,17 @@
-// style-dictionary.config.js
+// style-dictionary.config.mjs
 
-const StyleDictionary = require('style-dictionary');
-const sdTransforms = require('@tokens-studio/sd-transforms');
+import StyleDictionary from 'style-dictionary';
+import sdTransforms from '@tokens-studio/sd-transforms';
 
-// 1. Registrér tokens-studio transforms, så referencer opløses korrekt
+// 1. Registrér tokens-studio transforms (kræver Style Dictionary 4.x)
 sdTransforms.registerTransforms(StyleDictionary);
 
-module.exports = {
+// 2. Eksportér din Style Dictionary konfiguration som "default"
+export default {
+  // Du kan undlade global "source", hvis du definerer "source" pr. platform
   platforms: {
-    // brand eBoks
-    eboks: {
+    // brand: eBoks
+    brandEboks: {
       source: [
         'tokens/globals/value.json',
         'tokens/theme/light.json',
@@ -25,8 +27,9 @@ module.exports = {
         }
       ]
     },
-    // brand PostNL
-    postnl: {
+
+    // brand: PostNL
+    brandPostnl: {
       source: [
         'tokens/globals/value.json',
         'tokens/theme/light.json',
@@ -42,8 +45,9 @@ module.exports = {
         }
       ]
     },
-    // brand Nykredit
-    nykredit: {
+
+    // brand: Nykredit
+    brandNykredit: {
       source: [
         'tokens/globals/value.json',
         'tokens/theme/light.json',
