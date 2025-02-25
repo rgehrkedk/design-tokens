@@ -1,8 +1,9 @@
 {
     "name": "design-tokens",
     "version": "1.0.0",
+    "type": "module",
     "scripts": {
-        "fetch:tokens": "node fetch-tokens.js",
+        "fetch:tokens": "node fetch-tokens.cjs",
         "build:tokens": "style-dictionary build"
     },
     "devDependencies": {
