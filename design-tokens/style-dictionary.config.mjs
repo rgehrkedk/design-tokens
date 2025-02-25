@@ -1,10 +1,10 @@
 // style-dictionary.config.mjs
 
 import StyleDictionary from 'style-dictionary';
-// Bemærk brug af "registerTokenStudioTransforms" frem for "registerTransforms"
-import { registerTokenStudioTransforms } from '@tokens-studio/sd-transforms';
+import { transformers } from '@tokens-studio/sd-transforms';
 
-registerTokenStudioTransforms(StyleDictionary);
+// Her kalder vi "transformers.registerTransforms(...)" – i v1.2.9 er det denne metode
+transformers.registerTransforms(StyleDictionary);
 
 export default {
   platforms: {
@@ -15,6 +15,7 @@ export default {
         'tokens/theme/dark.json',
         'tokens/brand/eboks.json'
       ],
+      // "tokens-studio" er den transformGroup, sd-transforms normalt definerer
       transformGroup: 'tokens-studio',
       buildPath: 'build/eboks/',
       files: [
