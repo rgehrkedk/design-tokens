@@ -1,43 +1,15 @@
 /**
- * Build script med fokus på korrekt håndtering af token-referencer
+ * Opdateret simpel build script for Style Dictionary v4
  */
 
+// Import Style Dictionary
 import StyleDictionary from 'style-dictionary';
 
-console.log('Style Dictionary Version:', StyleDictionary.VERSION);
-
-// Definer en custom transform
-StyleDictionary.registerTransform({
-  name: 'attribute/cti',
-  type: 'attribute',
-  transformer: function(prop) {
-    return {
-      category: prop.path[0],
-      type: prop.path[1],
-      item: prop.path[2]
-    };
-  }
-});
-
-// Registrer custom format for mere detaljeret output
-StyleDictionary.registerFormat({
-  name: 'json/nested-with-references',
-  formatter: function(dictionary, config) {
-    // Få alle tokens og bevar deres fulde path
-    return JSON.stringify(dictionary.tokens, null, 2);
-  }
-});
-
-// Definer transformGroup for fuld reference-bevarelse
-StyleDictionary.registerTransformGroup({
-  name: 'js-with-references',
-  transforms: [
-    'attribute/cti',
-    'name/cti/constant',
-    'size/px',
-    'color/css'
-  ]
-});
+// Log version og strukturer for at hjælpe med at fejlfinde
+console.log('Style Dictionary VERSION:', StyleDictionary.VERSION);
+console.log('Style Dictionary constructor type:', typeof StyleDictionary);
+console.log('Direkte properties på StyleDictionary:', Object.getOwnPropertyNames(StyleDictionary));
+console.log('Er StyleDictionary en class:', StyleDictionary.toString().startsWith('class'));
 
 // Konfiguration for alle brands
 const config = {
@@ -46,47 +18,35 @@ const config = {
   ],
   platforms: {
     eboks: {
-      transformGroup: 'js-with-references',
+      transformGroup: 'js',
       buildPath: 'build/',
       files: [{
         destination: 'eboks-tokens.json',
-        format: 'json/nested-with-references',
+        format: 'json/nested',
         options: {
           outputReferences: true
-        },
-        filter: (token) => {
-          return token.filePath.includes('eboks.json') || 
-                 !token.filePath.includes('brand/');
         }
       }]
     },
     nykredit: {
-      transformGroup: 'js-with-references',
+      transformGroup: 'js',
       buildPath: 'build/',
       files: [{
         destination: 'nykredit-tokens.json',
-        format: 'json/nested-with-references',
+        format: 'json/nested',
         options: {
           outputReferences: true
-        },
-        filter: (token) => {
-          return token.filePath.includes('nykredit.json') || 
-                 !token.filePath.includes('brand/');
         }
       }]
     },
     postnl: {
-      transformGroup: 'js-with-references',
+      transformGroup: 'js',
       buildPath: 'build/',
       files: [{
         destination: 'postnl-tokens.json',
-        format: 'json/nested-with-references',
+        format: 'json/nested',
         options: {
           outputReferences: true
-        },
-        filter: (token) => {
-          return token.filePath.includes('postnl.json') || 
-                 !token.filePath.includes('brand/');
         }
       }]
     }
@@ -94,10 +54,49 @@ const config = {
 };
 
 try {
-  console.log('Building tokens with reference preservation...');
-  const sd = StyleDictionary(config);
-  sd.buildAllPlatforms();
-  console.log('✅ Finished! Tokens are saved in the build folder.');
+  console.log('Starter StyleDictionary bygning...');
+  
+  // Prøv at anvende StyleDictionary som en klasse (constructor)
+  try {
+    console.log('Prøver at anvende StyleDictionary som en constructor...');
+    const sd = new StyleDictionary(config);
+    
+    // Tjek om der er en buildAllPlatforms metode
+    if (typeof sd.buildAllPlatforms === 'function') {
+      console.log('Bygger tokens for alle brands med sd.buildAllPlatforms()...');
+      sd.buildAllPlatforms();
+      console.log('✅ Færdig! Tokens er gemt i build-mappen.');
+    } else {
+      console.log('Tilgængelige metoder på sd:', Object.getOwnPropertyNames(sd));
+      
+      // Prøv build metoden hvis buildAllPlatforms ikke findes
+      if (typeof sd.build === 'function') {
+        console.log('Bygger tokens for alle brands med sd.build()...');
+        sd.build();
+        console.log('✅ Færdig! Tokens er gemt i build-mappen.');
+      } else {
+        throw new Error('Kunne ikke finde build eller buildAllPlatforms metoder');
+      }
+    }
+  } catch (constructorError) {
+    console.log('Constructor approach failed:', constructorError.message);
+    
+    // Prøv at kalde StyleDictionary som en funktion
+    console.log('Prøver at kalde StyleDictionary som en funktion...');
+    const sd = StyleDictionary(config);
+    
+    if (typeof sd.buildAllPlatforms === 'function') {
+      console.log('Bygger tokens for alle brands med funktionsresultat...');
+      sd.buildAllPlatforms();
+      console.log('✅ Færdig! Tokens er gemt i build-mappen.');
+    } else if (typeof sd.build === 'function') {
+      console.log('Bygger tokens med sd.build()...');
+      sd.build();
+      console.log('✅ Færdig! Tokens er gemt i build-mappen.');
+    } else {
+      throw new Error('Kunne ikke finde build metoder på funktionsresultatet');
+    }
+  }
 } catch (error) {
-  console.error('❌ Build failed:', error);
+  console.error('❌ Fejl ved bygning af tokens:', error);
 }
