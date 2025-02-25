@@ -4,7 +4,7 @@
     "description": "Design tokens for brands",
     "type": "module",
     "scripts": {
-      "build:tokens": "node build.js"
+      "build:tokens": "node modern-build.js"
     },
     "dependencies": {
       "style-dictionary": "^4.3.3"

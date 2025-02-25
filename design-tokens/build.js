@@ -1,12 +1,11 @@
 /**
- * Modern build script for Style Dictionary
- * Dette følger den nuværende anbefaling fra Style Dictionary dokumentationen
+ * Build script til Style Dictionary v4
  */
 
 import StyleDictionary from 'style-dictionary';
 
-// Konfigurer platforms
-const myStyleDictionary = StyleDictionary.extend({
+// Konfigurer Style Dictionary
+const sd = StyleDictionary.extend({
   source: ['tokens/**/*.json'],
   platforms: {
     eboks: {
@@ -65,5 +64,5 @@ const myStyleDictionary = StyleDictionary.extend({
 
 // Byg alle platforms
 console.log('Bygger tokens for alle brands...');
-myStyleDictionary.buildAllPlatforms();
+sd.buildAllPlatforms();
 console.log('Færdig! Tokens er gemt i build-mappen.');
