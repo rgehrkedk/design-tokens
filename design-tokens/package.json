@@ -4,8 +4,7 @@
     "type": "module",
     "scripts": {
         "fetch:tokens": "node fetch-tokens.cjs",
-        "build:tokens": "style-dictionary build --config style-dictionary.config.mjs",
-        "build": "style-dictionary build --config style-dictionary.config.mjs"
+        "build:tokens": "node build.js"
     },
     "devDependencies": {
         "@tokens-studio/sd-transforms": "^1.0.0",
