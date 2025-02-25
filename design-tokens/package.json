@@ -3,12 +3,12 @@
     "version": "1.0.0",
     "type": "module",
     "scripts": {
-        "fetch:tokens": "node fetch-tokens.cjs",
-        "build:tokens": "style-dictionary build --config style-dictionary.config.mjs"
+      "fetch:tokens": "node fetch-tokens.js",
+      "build:tokens": "style-dictionary build --config style-dictionary.config.mjs"
     },
     "devDependencies": {
-        "@tokens-studio/sd-transforms": "^1.2.9",
-        "axios": "^1.7.9",
-        "style-dictionary": "^4.3.3"
+      "@tokens-studio/sd-transforms": "^1.10.0",
+      "axios": "^1.7.9",
+      "style-dictionary": "^4.3.3"
     }
-}
+  }
