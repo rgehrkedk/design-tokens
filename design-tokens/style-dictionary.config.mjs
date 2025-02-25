@@ -1,16 +1,14 @@
 // style-dictionary.config.mjs
 
 import StyleDictionary from 'style-dictionary';
-import registerTransforms from '@tokens-studio/sd-transforms';
+import { registerTransforms } from '@tokens-studio/sd-transforms';
 
-// 1. Registrér tokens-studio transforms (kræver Style Dictionary 4.x)
+// 1. Registrér tokens-studio transforms
 registerTransforms(StyleDictionary);
 
-// 2. Eksportér din Style Dictionary konfiguration som "default"
 export default {
-  // Du kan undlade global "source", hvis du definerer "source" pr. platform
   platforms: {
-    // brand: eBoks
+    // brand eBoks
     brandEboks: {
       source: [
         'tokens/globals/value.json',
@@ -27,8 +25,7 @@ export default {
         }
       ]
     },
-
-    // brand: PostNL
+    // brand PostNL
     brandPostnl: {
       source: [
         'tokens/globals/value.json',
@@ -45,8 +42,7 @@ export default {
         }
       ]
     },
-
-    // brand: Nykredit
+    // brand Nykredit
     brandNykredit: {
       source: [
         'tokens/globals/value.json',
