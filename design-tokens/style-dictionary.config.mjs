@@ -1,7 +1,9 @@
-import StyleDictionary from 'style-dictionary';
-import { registerTransforms } from '@tokens-studio/sd-transforms';
+// style-dictionary.config.mjs
 
-registerTransforms(StyleDictionary);
+import StyleDictionary from 'style-dictionary';
+import { registerTokenStudioTransforms } from '@tokens-studio/sd-transforms/src/index.js';
+
+registerTokenStudioTransforms(StyleDictionary);
 
 export default {
   platforms: {
