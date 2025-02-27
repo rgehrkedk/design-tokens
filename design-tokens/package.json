@@ -8,10 +8,17 @@
     "build:simple": "node simple-build.js",
     "build:original": "node build.js",
     "build:reference": "node reference-build.js",
-    "build:direct": "node direct-build.js"
-
+    "build:direct": "node direct-build.js",
+    "build:fetch": "node fetch-tokens.js",
+    "build": "node index.js",
+    "clean": "rimraf json build",
+    "build:sd": "node build-style-dictionary.js"
   },
   "dependencies": {
+    "node-fetch": "^3.3.2",
     "style-dictionary": "^4.3.3"
+  },
+  "devDependencies": {
+    "rimraf": "^5.0.5"
   }
 }
