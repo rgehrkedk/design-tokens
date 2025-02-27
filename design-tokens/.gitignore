@@ -1,7 +1,4 @@
-# Build output
-build/
-dist/
-json/
+
 
 # Dependencies
 node_modules/
